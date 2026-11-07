@@ -1,5 +1,6 @@
 import type { Metadata } from 'next';
 import Link from 'next/link';
+import { DETAIL_VIEWS } from '@/lib/inspection';
 import { EQUIPMENT, TOUR_POINTS } from '@/lib/site';
 import { DEFAULT_PARAMETERS, DEMO_COSTS, getResults, simulate } from '@/lib/simulation';
 
@@ -33,9 +34,9 @@ const comparisonRows: { label: string; base: string; fast: string }[] = [
 export default function ModelPage() {
   const p = DEFAULT_PARAMETERS;
   return (
-    <main className="public-model" style={{ maxWidth: 960, margin: '0 auto', padding: '40px 24px 80px', color: '#25382f', fontSize: 15, lineHeight: 1.75 }}>
+    <main className="public-model" style={{ maxWidth: 960, margin: '0 auto', padding: '40px 24px 80px', color: '#263b4c', fontSize: 15, lineHeight: 1.75 }}>
       <style>{'.public-model h1{margin:14px 0 22px}.public-model h2{font-size:23px;line-height:1.35;margin:0 0 18px}.public-model p{margin:12px 0}.public-model li{margin-bottom:10px}.public-model dd{margin:5px 0 18px}.public-model a:hover{text-decoration:underline}.public-model a:focus-visible{outline-offset:4px}'}</style>
-      <Link href="/" style={{ color: '#2c6750', fontWeight: 650 }}>← Карта участка и симуляция</Link>
+      <Link href="/" style={{ color: '#0079c2', fontWeight: 650 }}>← Карта участка и симуляция</Link>
       <header style={{ padding: '30px 0 22px' }}>
         <p style={{ fontSize: 12, letterSpacing: 2, fontWeight: 700 }}>КОНТУР · УЧЕБНЫЙ ПРОТОТИП</p>
         <h1 style={{ fontSize: 'clamp(28px, 5vw, 44px)', lineHeight: 1.2 }}>Модель участка и результаты</h1>
@@ -55,15 +56,19 @@ export default function ModelPage() {
 
       <section aria-labelledby="tour" style={{ marginTop: 36 }}>
         <h2 id="tour">Семь точек экскурсии</h2>
-        <p>Виды участка — семь отдельных статичных изображений с высоты глаз около 1,7 м. Они созданы встроенным генератором с общими стилевыми референсами. Это не 360°-панорамы и не интерактивная 3D-сцена. Изображение показывает обстановку; состояния и показатели рядом с ним берутся из текущей симуляции.</p>
+        <p>Виды участка — семь отдельных статичных изображений с высоты глаз около 1,7 м и четыре фронтальных крупных плана механизмов. Они созданы встроенным генератором с общими стилевыми референсами. Это не 360°-панорамы и не интерактивная 3D-сцена. Изображение показывает обстановку; состояния и показатели рядом с ним берутся из текущей симуляции.</p>
         <ol>
           {TOUR_POINTS.map((point) => (
             <li key={point.id} style={{ marginBottom: 14 }}>
               <strong>{point.id} — {point.title}.</strong> Координаты камеры ({point.x}, {point.y}), взгляд: {point.direction.toLowerCase()}. {point.description}
-              <br /><span>Показатели: {point.metrics.join(', ').toLowerCase()}. </span><a href={point.image} style={{ color: '#2c6750' }}>Открыть иллюстрацию</a>
+              <br /><span>Показатели: {point.metrics.join(', ').toLowerCase()}. </span><a href={point.image} style={{ color: '#0079c2' }}>Открыть иллюстрацию</a>
             </li>
           ))}
         </ol>
+        <h3>Фронтальный осмотр оборудования</h3>
+        <p>Участок показан как малая часть большого промышленного предприятия: за ним продолжаются эстакады, корпуса и коммуникации. Палитра карты и оборудования вдохновлена синими и белыми цветами промышленных объектов Газпрома; это вымышленный учебный объект. Визуальные референсы: <a href="https://www.gehia.ru/press/news/i/item/52/">Амурский ГПЗ — фотографии Газпром энергохолдинга</a> и <a href="https://autoreview.ru/articles/zavody-i-proizvodstva/gazprommaslo">цех смешивания на Омском заводе смазочных материалов</a>. Сами изображения в приложении сгенерированы.</p>
+        <ul>{Object.values(DETAIL_VIEWS).map(view=><li key={view.id}><a href={view.image}>{view.title}</a>. Камера перпендикулярна плоскости узла; отметки привязаны к видимым механизмам.</li>)}</ul>
+        <p>Метки на изображении открывают крупный план или выбирают деталь. Настройки выбранного узла изменяют черновик: расход, вязкость, рецептуру, длительность проверки или производительность фасовки. «Применить и перезапустить» начинает новый расчёт. Кнопка паузы на фронтальных пультах управляет воспроизведением всей модели. Встроенные в фотографию стрелки приборов — неподвижная иллюстрация; текущие величины выводятся HTML-интерфейсом.</p>
         <p>Выбор оборудования показывает его параметры. Вид открывается только камерой или явной кнопкой просмотра. Маршрут переключает выбранные точки последовательно P01 → P07; произвольная прогулка не моделируется.</p>
       </section>
 
@@ -112,7 +117,7 @@ export default function ModelPage() {
         <p>Прототип работает на синтетических данных, без обязательной регистрации и без интеграций ERP/MES/1С. Базовая авторизация пока отсутствует и не считается выполненным требованием полного хакатонного решения. Пользовательские сценарии хранятся только в localStorage текущего браузера. Метрики производительности под нагрузкой не измерялись и не заявляются.</p>
         <p>Описание точки отделено от компонента просмотра: её изображение можно заменить панорамой с направлением обзора или WebGL-сценой Three.js/React Three Fiber. Независимую функцию симуляции можно заменить серверным API, сохранив параметры и снимок состояния как контракт; возможный стек — Rust/Axum/Tokio и PostgreSQL. Для публикации полного приложения нужен HTTPS. Расширение инфраструктуры следует обосновывать требованиями и измерениями.</p>
       </section>
-      <footer style={{ marginTop: 40, paddingTop: 20, borderTop: '1px solid #dbe2db' }}><Link href="/" style={{ color: '#2c6750', fontWeight: 650 }}>Вернуться к карте →</Link></footer>
+      <footer style={{ marginTop: 40, paddingTop: 20, borderTop: '1px solid #dbe2db' }}><Link href="/" style={{ color: '#0079c2', fontWeight: 650 }}>Вернуться к карте →</Link></footer>
     </main>
   );
 }
