@@ -197,7 +197,7 @@ export default function Workspace({ user }: { user: User }) {
         </header>
 
         <main className={`page page-${tab}`}>
-          {tab === 'overview' && <OverviewView result={result} baseline={baseline} time={time} openTour={openTour} go={setTab} />}
+          {tab === 'overview' && <OverviewView result={result} baseline={baseline} time={time} clock={clock} openTour={openTour} go={setTab} />}
           {tab === 'receiving' && <ReceivingView result={result} time={time} />}
           {tab === 'production' && <ProductionView result={result} time={time} />}
           {tab === 'analytics' && <AnalyticsView result={result} baseline={baseline} baselineId={baselineId} setBaselineId={setBaselineId} apply={apply} busy={busy} canRun={canRun} time={time} />}

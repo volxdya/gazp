@@ -1,21 +1,20 @@
 'use client';
 
 import { useMemo, useState } from 'react';
-import { ArrowRight, Box } from 'lucide-react';
+import { ArrowRight } from 'lucide-react';
 import { fmtClock, type TwinResult } from '@/lib/twin/sim';
-import { POIS, type PoiId } from '@/lib/twin/pois';
-import { fmt, liveAt, pinStatuses, recentEvents } from '@/lib/twin/derive';
-import { SchemeSvg } from './SchemeView';
+import type { PoiId } from '@/lib/twin/pois';
+import { fmt, liveAt, recentEvents } from '@/lib/twin/derive';
+import SiteMap from './SiteMap';
+import PoiModal from './PoiModal';
 import { Kpi, Meter, Panel } from './ui';
 import type { Tab } from './Workspace';
 
-export default function OverviewView({ result, baseline, time, openTour, go }: { result: TwinResult; baseline: TwinResult; time: number; openTour: (id: PoiId) => void; go: (t: Tab) => void }) {
+export default function OverviewView({ result, baseline, time, clock, openTour, go }: { result: TwinResult; baseline: TwinResult; time: number; clock: React.RefObject<{ t: number; speed: number }>; openTour: (id: PoiId) => void; go: (t: Tab) => void }) {
   const live = useMemo(() => liveAt(result, time), [result, time]);
-  const st = useMemo(() => pinStatuses(result, live), [result, live]);
   const events = useMemo(() => recentEvents(result, time, 6), [result, time]);
   const [sel, setSel] = useState<PoiId | null>(null);
   const m = result.metrics, b = baseline.metrics;
-  const poi = sel ? POIS.find((x) => x.id === sel)! : null;
   const resources = [...result.resources].sort((a, c) => c.utilization - a.utilization).slice(0, 5);
 
   return (
@@ -28,22 +27,8 @@ export default function OverviewView({ result, baseline, time, openTour, go }: {
       </div>
 
       <div className="ov-grid">
-        <Panel
-          title="Схема участка"
-          className="ov-scheme"
-          flush
-          action={<div className="legend"><span><i className="ext" />приём</span><span><i className="shared" />общее</span><span><i className="int" />производство</span></div>}
-        >
-          <SchemeSvg result={result} time={time} selected={sel} onSelect={setSel} />
-          {poi && (
-            <div className="ov-poi rise" key={poi.id}>
-              <div>
-                <b>{poi.title}</b>
-                <span className="ov-poi-status">{st[poi.id].text}</span>
-              </div>
-              <button className="btn btn-ghost btn-sm" onClick={() => openTour(poi.id)}><Box size={14} /> В 3D</button>
-            </div>
-          )}
+        <Panel title="Схема участка" className="ov-scheme" flush>
+          <SiteMap result={result} time={time} selected={sel} onOpen={setSel} />
         </Panel>
 
         <div className="ov-side">
@@ -85,6 +70,8 @@ export default function OverviewView({ result, baseline, time, openTour, go }: {
           </Panel>
         </div>
       </div>
+
+      {sel && <PoiModal id={sel} result={result} time={time} clock={clock} onClose={() => setSel(null)} onNav={setSel} onTour={(id) => { setSel(null); openTour(id); }} />}
     </div>
   );
 }

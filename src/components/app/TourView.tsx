@@ -4,7 +4,8 @@ import { useEffect, useMemo, useState } from 'react';
 import { ArrowRight, ChevronLeft, ChevronRight, Moon, Play, Square, Sun, X } from 'lucide-react';
 import SceneView from '@/components/scene/SceneView';
 import type { TwinResult } from '@/lib/twin/sim';
-import { POIS, TOUR_ORDER, type PoiId } from '@/lib/twin/pois';
+import { PHOTOS, POIS, TOUR_ORDER, type PoiId } from '@/lib/twin/pois';
+import PoiModal from './PoiModal';
 import { compareRows, fmt, liveAt, pinStatuses } from '@/lib/twin/derive';
 import { report } from './report';
 
@@ -34,6 +35,7 @@ export default function TourView(p: Props) {
   const [night, setNight] = useState(false);
   const [auto, setAuto] = useState<number | null>(null);
   const [summary, setSummary] = useState(false);
+  const [zoom, setZoom] = useState<PoiId | null>(null);
 
   const go = (d: number) => {
     const next = TOUR_ORDER[(idx + d + TOUR_ORDER.length) % TOUR_ORDER.length];
@@ -107,6 +109,11 @@ export default function TourView(p: Props) {
             <span className="eyebrow num">{poi.n} / {TOUR_ORDER.length}</span>
             <button className="icon-btn" onClick={() => { setAuto(null); p.setSelected(null); }} aria-label="Закрыть"><X size={15} /></button>
           </header>
+          {PHOTOS[poi.id] && (
+            <button className="tour-photo" onClick={() => { setAuto(null); setZoom(poi.id); }} aria-label={`Фото: ${poi.title}`}>
+              <img src={PHOTOS[poi.id]!.main} alt="" loading="lazy" />
+            </button>
+          )}
           <h2>{poi.title}</h2>
           <dl className="tour-facts">
             <div><dt>Сейчас</dt><dd>{statuses[poi.id].text}</dd></div>
@@ -128,6 +135,8 @@ export default function TourView(p: Props) {
       )}
 
       {eye && auto === null && <div className="tour-hint">Перетащите, чтобы осмотреться</div>}
+
+      {zoom && <PoiModal id={zoom} result={result} time={time} clock={p.clock} onClose={() => setZoom(null)} onNav={(id) => { setZoom(id); p.setSelected(id); }} allow3d={false} />}
 
       {summary && (
         <div className="tour-summary" role="dialog" aria-label="Итог экскурсии">

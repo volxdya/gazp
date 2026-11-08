@@ -25,16 +25,16 @@ export default function ProductionView({ result, time }: { result: TwinResult; t
         <Panel title="Партии" flush>
           <div className="table-wrap">
             <table className="tbl">
-              <thead><tr><th>№</th><th>Продукт</th><th>Статус</th><th className="r">План</th><th className="r">Готово</th></tr></thead>
+              <thead><tr><th>№</th><th>Продукт</th><th>Статус</th><th className="r hide-sm">План</th><th className="r">Готово</th></tr></thead>
               <tbody>
                 {result.batches.map((b) => {
                   const s = batchStatus(b, time);
                   return (
                     <tr key={b.id} className={s.tone === 'idle' ? 'dim' : ''}>
                       <td className="num muted">{b.id}</td>
-                      <td><b>{RECIPES[b.product]}</b> <span className="muted">· {b.m3} м³</span></td>
+                      <td><b>{RECIPES[b.product]}</b> <span className="muted hide-sm">· {b.m3} м³</span></td>
                       <td><Status tone={s.tone}>{s.label}</Status></td>
-                      <td className="r num muted">{fmtClock(b.planned)}</td>
+                      <td className="r num muted hide-sm">{fmtClock(b.planned)}</td>
                       <td className="r num">{time >= b.done ? fmtClock(b.done) : Number.isFinite(b.done) && b.done > p.shiftHours * 60 + 15 ? 'после смены' : '—'}</td>
                     </tr>
                   );

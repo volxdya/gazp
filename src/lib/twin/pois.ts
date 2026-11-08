@@ -132,3 +132,14 @@ export const STAGES: Record<StageId, { title: string; lane: 'internal' | 'extern
   I4: { title: 'Фасовка в бочки', lane: 'internal', resource: 'line', poi: 'filling' },
   I5: { title: 'Склад готовой продукции', lane: 'internal', poi: 'warehouse' }
 };
+
+/** Фото точек (виды из первой версии проекта). Где фото нет — в карточке показывается живой 3D-вид. */
+export const PHOTOS: Partial<Record<PoiId, { main: string; detail?: string; detailCaption?: string }>> = {
+  bays: { main: '/views/p01-receiving.webp', detail: '/views/detail-valve.webp', detailCaption: 'Задвижка на линии слива' },
+  tanks: { main: '/views/p02-storage.webp' },
+  pumps: { main: '/views/p03-pumps.webp', detail: '/views/detail-pump.webp', detailCaption: 'Насос подачи' },
+  blend: { main: '/views/p04-blending.webp', detail: '/views/detail-mixer-control.webp', detailCaption: 'Пульт смесителя' },
+  lab: { main: '/views/p05-quality.webp' },
+  filling: { main: '/views/p06-filling.webp', detail: '/views/detail-filling-control.webp', detailCaption: 'Налив в бочку' },
+  warehouse: { main: '/views/p07-dispatch.webp' }
+};

@@ -33,7 +33,7 @@ export default function ReceivingView({ result, time }: { result: TwinResult; ti
         <Panel title="Автоцистерны" flush action={rows.length > 9 && <button className="link" onClick={() => setAll(!all)}>{all ? 'Свернуть' : `Все ${rows.length}`}</button>}>
           <div className="table-wrap">
             <table className="tbl">
-              <thead><tr><th>Номер</th><th>Сырьё</th><th>Статус</th><th className="r">Время</th><th className="r">На базе</th></tr></thead>
+              <thead><tr><th>Номер</th><th>Сырьё</th><th>Статус</th><th className="r hide-sm">Время</th><th className="r">На базе</th></tr></thead>
               <tbody>
                 {shown.map((t) => {
                   const s = truckStatus(t, time);
@@ -41,9 +41,9 @@ export default function ReceivingView({ result, time }: { result: TwinResult; ti
                   return (
                     <tr key={t.id} className={s.tone === 'idle' ? 'dim' : ''}>
                       <td className="mono">{t.plate}</td>
-                      <td><span className={`comp c-${t.component}`}>{t.component === 0 ? 'A' : 'B'}</span> {t.volume} м³</td>
+                      <td><span className={`comp c-${t.component}`}>{t.component === 0 ? 'A' : 'B'}</span> <span className="hide-sm">{t.volume} м³</span></td>
                       <td><Status tone={s.tone}>{s.label}</Status></td>
-                      <td className="r num muted">{fmtClock(t.arrive)}</td>
+                      <td className="r num muted hide-sm">{fmtClock(t.arrive)}</td>
                       <td className="r num">{onBase == null ? '—' : `${onBase} мин`}</td>
                     </tr>
                   );

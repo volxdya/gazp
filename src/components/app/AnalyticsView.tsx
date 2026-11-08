@@ -72,7 +72,7 @@ export default function AnalyticsView({ result, baseline, baselineId, setBaselin
         >
           <div className="table-wrap">
             <table className="tbl">
-              <thead><tr><th>Показатель</th><th className="r">Было</th><th className="r">Стало</th><th className="r">Изменение</th></tr></thead>
+              <thead><tr><th>Показатель</th><th className="r">Было</th><th className="r">Стало</th><th className="r hide-sm">Изменение</th></tr></thead>
               <tbody>
                 {rows.map((r) => {
                   const tone = rowTone(r);
@@ -82,7 +82,7 @@ export default function AnalyticsView({ result, baseline, baselineId, setBaselin
                       <td>{r.label}</td>
                       <td className="r num muted">{r.format(r.a)} {r.unit}</td>
                       <td className="r num"><b>{r.format(r.b)}</b> {r.unit}</td>
-                      <td className={`r num ${tone === 'good' ? 'up' : tone === 'bad' ? 'down' : 'muted'}`}>{tone === 'same' ? '—' : `${d > 0 ? '+' : '−'}${r.format(Math.abs(d))}`}</td>
+                      <td className={`r num hide-sm ${tone === 'good' ? 'up' : tone === 'bad' ? 'down' : 'muted'}`}>{tone === 'same' ? '—' : `${d > 0 ? '+' : '−'}${r.format(Math.abs(d))}`}</td>
                     </tr>
                   );
                 })}
