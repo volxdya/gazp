@@ -10,7 +10,8 @@ export const metadata: Metadata = { title: 'Рабочее место', robots: 
 export default async function AppPage() {
   const session = await verifyToken((await cookies()).get(SESSION_COOKIE)?.value);
   if (!session) redirect('/login?next=/app');
+  // Сессия подписана сервером: если экземпляр хранилища не знает пользователя
+  // (другая бессерверная функция), доверяем данным из токена
   const user = (await store()).users.find((u) => u.id === session.sub);
-  if (!user) redirect('/login?next=/app');
-  return <Workspace user={{ name: user.name, role: user.role, email: user.email }} />;
+  return <Workspace user={user ? { name: user.name, role: user.role, email: user.email } : { name: session.name, role: session.role, email: session.email ?? '' }} />;
 }

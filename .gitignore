@@ -9,3 +9,4 @@ playwright-report/
 .data/
 .DS_Store
 .claude/
+.vercel

@@ -6,5 +6,5 @@ export async function GET(req: NextRequest) {
   const s = await sessionOf(req);
   if (!s) return fail(401, 'unauthorized', 'Не выполнен вход');
   const u = (await store()).users.find((x) => x.id === s.sub);
-  return u ? json({ user: publicUser(u) }) : fail(401, 'unauthorized', 'Сессия устарела');
+  return json({ user: u ? publicUser(u) : { id: s.sub, name: s.name, role: s.role, email: s.email ?? '' } });
 }

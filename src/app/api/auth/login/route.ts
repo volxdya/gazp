@@ -22,5 +22,5 @@ export async function POST(req: NextRequest) {
   }
   attempts.delete(ip);
   await audit('security', user.email, 'login', `Вход в систему, роль ${user.role}`);
-  return withSession(json({ user: publicUser(user) }), { sub: user.id, role: user.role, name: user.name });
+  return withSession(json({ user: publicUser(user) }), { sub: user.id, role: user.role, name: user.name, email: user.email });
 }

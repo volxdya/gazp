@@ -63,7 +63,9 @@ async function seed(): Promise<State> {
   ];
   const users: UserRecord[] = [];
   for (const [email, name, role, pw] of demo) {
-    users.push({ id: crypto.randomUUID(), email, name, role, password: await hashPassword(pw), createdAt: now, consent: { version: CONSENT_VERSION, acceptedAt: now, ip: 'seed' } });
+    // постоянный ID: на бессерверной платформе каждая функция поднимает своё хранилище,
+    // и сессия должна оставаться валидной в любой из них
+    users.push({ id: `demo-${role}`, email, name, role, password: await hashPassword(pw), createdAt: now, consent: { version: CONSENT_VERSION, acceptedAt: now, ip: 'seed' } });
   }
   return { users, journal: [], scenarios: [], seq: 0, bootCount: 0 };
 }

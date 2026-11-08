@@ -27,5 +27,5 @@ export async function POST(req: NextRequest) {
   });
   if (!result) return fail(409, 'exists', 'Пользователь с таким e-mail уже зарегистрирован');
   await audit('security', email, 'register', `Регистрация, согласие на обработку ПДн версии ${CONSENT_VERSION}`);
-  return withSession(json({ user: publicUser(result) }, 201), { sub: result.id, role: result.role, name: result.name });
+  return withSession(json({ user: publicUser(result) }, 201), { sub: result.id, role: result.role, name: result.name, email: result.email });
 }
