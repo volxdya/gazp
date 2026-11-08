@@ -1,0 +1,41 @@
+.scene { position: relative; overflow: hidden; isolation: isolate; }
+.scene-canvas { position: absolute; inset: 0; touch-action: none; }
+.scene-loading { position: absolute; inset: 0; display: grid; place-items: center; align-content: center; gap: 12px; color: var(--muted); font-weight: 500; text-align: center; padding: 24px; grid-auto-flow: row; }
+.spinner { width: 28px; height: 28px; border-radius: 50%; border: 3px solid var(--primary-100); border-top-color: var(--primary); animation: spin .8s linear infinite; display: block; margin: 0 auto; }
+
+.pins { position: absolute; inset: 0; pointer-events: none; z-index: 2; }
+.pin {
+  position: absolute; left: 0; top: 0; pointer-events: auto; display: flex; flex-direction: column; align-items: center;
+  will-change: transform; transition: opacity .2s; translate: -50% -100%;
+}
+.pin-label {
+  display: inline-flex; align-items: center; gap: 8px; background: rgba(255,255,255,.96); backdrop-filter: blur(8px);
+  border: 1px solid var(--line); border-radius: 13px; padding: 6px 12px 6px 6px; box-shadow: var(--sh-2);
+  font-weight: 700; font-size: 13.5px; white-space: nowrap; transition: transform .18s, background .18s, border-color .18s, box-shadow .18s;
+}
+.pin-n { width: 22px; height: 22px; border-radius: 7px; background: var(--primary); color: #fff; font-size: 12px; display: grid; place-items: center; font-weight: 800; }
+.pin.is-internal .pin-n { background: var(--teal); }
+.pin-st { font-size: 11.5px; font-weight: 600; padding: 2px 8px; border-radius: 999px; background: var(--green-50); color: #0c7a3c; }
+.pin-st.tone-busy { background: var(--primary-50); color: var(--primary-600); }
+.pin-st.tone-warn { background: var(--orange-50); color: #c2560a; }
+.pin-stem { width: 2px; height: 22px; background: linear-gradient(var(--line-2), var(--primary)); }
+.pin-dot { width: 11px; height: 11px; border-radius: 50%; background: var(--primary); border: 2.5px solid #fff; box-shadow: 0 2px 6px rgba(0,0,0,.25); margin-top: -2px; }
+.pin.is-shared .pin-n, .pin.is-shared .pin-dot { background: #7c5cff; }
+.pin.is-shared .pin-stem { background: linear-gradient(var(--line-2), #7c5cff); }
+.pin.is-internal .pin-stem { background: linear-gradient(var(--line-2), var(--teal)); }
+.pin.is-internal .pin-dot { background: var(--teal); }
+.pin:hover .pin-label { transform: translateY(-2px); border-color: var(--primary-100); }
+.pin.is-active { z-index: 3; }
+.pin.is-active .pin-label { background: var(--orange-50); border-color: #ffc59b; color: #a34405; box-shadow: 0 14px 30px -10px rgba(255,122,26,.55); transform: translateY(-3px) scale(1.04); }
+.pin.is-active .pin-n { background: var(--orange); }
+.pin.is-active .pin-stem { background: linear-gradient(#ffc59b, var(--orange)); }
+.pin.is-active .pin-dot { background: var(--orange); animation: pulse 1.6s infinite; }
+
+@media (max-width: 760px) {
+  .pin-label { font-size: 12px; padding: 4px 9px 4px 4px; gap: 6px; border-radius: 11px; }
+  .pin-n { width: 19px; height: 19px; font-size: 11px; }
+  .pin-st { display: none; }
+  .pin-stem { height: 14px; }
+  .pin:not(.is-active) .pin-title { display: none; }
+  .pin:not(.is-active) .pin-label { padding-right: 4px; }
+}

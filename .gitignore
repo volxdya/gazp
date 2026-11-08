@@ -6,3 +6,6 @@ test-results/
 playwright-report/
 .env*
 *.tar.gz
+.data/
+.DS_Store
+.claude/
