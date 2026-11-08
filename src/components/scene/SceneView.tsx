@@ -19,9 +19,12 @@ interface Props {
   autoRotate?: boolean;
   className?: string;
   onReady?: (api: { reset: () => void }) => void;
+  /** вид от первого лица в выбранной точке */
+  eye?: boolean;
+  night?: boolean;
 }
 
-export default function SceneView({ result, clock, selected, onSelect, statuses, showPins = true, interactive = true, autoRotate, className, onReady }: Props) {
+export default function SceneView({ result, clock, selected, onSelect, statuses, showPins = true, interactive = true, autoRotate, className, onReady, eye = false, night = false }: Props) {
   const host = useRef<HTMLDivElement>(null);
   const sceneRef = useRef<TerminalScene | null>(null);
   const pinRefs = useRef<Partial<Record<PoiId, HTMLButtonElement | null>>>({});
@@ -73,10 +76,18 @@ export default function SceneView({ result, clock, selected, onSelect, statuses,
   }, []);
 
   useEffect(() => { if (ready && result) sceneRef.current?.setTrace(result); }, [ready, result]);
-  useEffect(() => { if (ready) sceneRef.current?.focus(selected); }, [selected, ready]);
+  useEffect(() => {
+    const s = sceneRef.current;
+    if (!ready || !s) return;
+    if (eye && selected) s.setEye(selected);
+    else if (eye && !selected) s.setEye(null);
+    else if (!eye && s.inEye) s.setEye(null);
+    else s.focus(selected);
+  }, [selected, ready, eye]);
+  useEffect(() => { if (ready) sceneRef.current?.setNight(night); }, [night, ready]);
 
   return (
-    <div className={`scene ${className ?? ''}`}>
+    <div className={`scene ${className ?? ''} ${eye ? 'is-eye' : ''} ${night ? 'is-night' : ''}`}>
       <div ref={host} className="scene-canvas" />
       {!ready && !failed && <div className="scene-loading"><span className="spinner" />Строим 3D-модель базы…</div>}
       {failed && <div className="scene-loading">{failed}</div>}

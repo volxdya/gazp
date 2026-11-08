@@ -188,7 +188,7 @@ export default function Workspace({ user }: { user: User }) {
             user={user} canRun={canRun} result={result} baseline={baseline} baselineId={baselineId} setBaselineId={setBaselineId}
             draft={draft} setDraft={setDraft} onRun={() => run(draft)} applyPreset={applyPreset} busy={busy} computeInfo={computeInfo}
             clock={clock} time={time} playing={playing} setPlaying={setPlaying} speed={speed} setSpeed={setSpeed} seek={seek}
-            selected={selected} setSelected={setSelected} goProcess={() => setTab('process')}
+            selected={selected} setSelected={setSelected} goProcess={() => setTab('process')} goCompare={() => setTab('compare')}
           />
         )}
         {tab === 'scheme' && <SchemeView result={result} time={time} playing={playing} setPlaying={setPlaying} seek={seek} selected={selected} setSelected={setSelected} open3d={openPoi} />}

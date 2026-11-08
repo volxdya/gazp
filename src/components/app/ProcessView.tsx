@@ -34,6 +34,7 @@ export default function ProcessView({ result, baseline, baselineName, openPoi, t
         <span className="node-res">{s.resource ? RESOURCE_LABEL[s.resource] : 'без ресурса'}{s.shared && <i className="node-shared">общий</i>}</span>
         <span className="node-time num">{st ? fmt.min(st.work) : '—'} <small>мин</small>{st && st.wait > 0.5 && <em> + {fmt.min(st.wait)} ожид.</em>}</span>
         {r && <span className="node-bar"><i style={{ width: `${r.utilization * 100}%` }} /></span>}
+        {st && <span className="node-cost num">≈ {fmt.int(st.cost)} ₽</span>}
         {isBn && <span className="node-bn">узкое место</span>}
       </button>
     );
@@ -93,6 +94,7 @@ export default function ProcessView({ result, baseline, baselineName, openPoi, t
             <p>
               Среднее время этапа — <b className="num">{stats[sel] ? fmt.min(stats[sel].work) : '—'} мин</b>
               {sr && <> · ресурс «{sr.label}» ×{sr.capacity}, загрузка <b className="num">{fmt.pct(sr.utilization)}%</b>, макс. очередь <b className="num">{sr.maxQueue}</b></>}
+              {stats[sel] && <> · стоимость этапа <b className="num">≈ {fmt.int(stats[sel].cost)} ₽</b> на {s.lane === 'external' ? 'цистерну' : 'партию'}</>}
             </p>
           </div>
           <button className="btn btn-ghost btn-sm" onClick={() => openPoi(s.poi)}>Показать в 3D-туре <ArrowRight size={15} /></button>

@@ -19,6 +19,22 @@ export interface Poi {
   zone: [number, number, number, number];
 }
 
+/** Точка осмотра «от первого лица»: где стоит человек (x, z) и куда смотрит (x, y, z). Высота глаз 1,7 м. */
+export const EYE: Record<PoiId, { pos: [number, number]; look: [number, number, number] }> = {
+  gate: { pos: [-50, 31], look: [-66, 2.4, 19] },
+  scales: { pos: [-50, 30.5], look: [-38, 0.6, 21] },
+  lot: { pos: [6, 29], look: [-16, 1.6, 42] },
+  control: { pos: [-28, 15], look: [-46, 4.5, 1] },
+  bays: { pos: [-13, 25], look: [8, 2.6, 3] },
+  pumps: { pos: [37, -18], look: [50, 2.2, -31] },
+  tanks: { pos: [16, -21], look: [18, 6.5, -38] },
+  blend: { pos: [27, 33.5], look: [14.5, 2.2, 39] },
+  lab: { pos: [-24, 7], look: [-36, 4, 1] },
+  filling: { pos: [17.5, 44.5], look: [31, 1.4, 40] },
+  warehouse: { pos: [37.5, 42.5], look: [55, 1.6, 41.5] },
+  exit: { pos: [-58, -27], look: [-78, 2, -18] }
+};
+
 export const PROCESS_LABEL: Record<ProcessKind, string> = {
   external: 'Внешний процесс · приём автоцистерн',
   internal: 'Внутренний процесс · производство',

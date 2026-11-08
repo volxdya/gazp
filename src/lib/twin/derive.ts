@@ -1,6 +1,6 @@
 import type { TwinResult, TruckTrace, TwinParams } from './sim';
 import { RESOURCE_LABEL } from './sim';
-import type { PoiId, StageId } from './pois';
+import { STAGES, type PoiId, type StageId } from './pois';
 import { SCENARIOS } from './scenarios';
 
 export const plural = (n: number, forms: [string, string, string]) => {
@@ -143,12 +143,19 @@ export function insight(a: TwinResult, b: TwinResult) {
   return { tone: 'bad' as const, title: `Хуже: маржа −${fmt.rub(-dm)} ₽`, text: `Сценарий не трогает узкое место — ${bn} — и только добавляет затраты.` };
 }
 
-/** Средние длительности этапов: работа и ожидание перед этапом */
-export function stageStats(r: TwinResult): Record<StageId, { work: number; wait: number; n: number }> {
-  const acc = {} as Record<StageId, { work: number; wait: number; n: number }>;
+/** Ставки ресурсов, ₽/ч: зарплата смены, амортизация и энергия (синтетика для учебной модели) */
+export const RESOURCE_RATE: Record<string, number> = {
+  gate: 650, scales: 800, bays: 1500, dispatcher: 950, lab: 1900, operator: 1150, blender: 2100, line: 1700
+};
+
+/** Средние длительности этапов: работа, ожидание перед этапом и стоимость на одну цистерну / партию */
+const STAGE_RESOURCE = Object.fromEntries(Object.entries(STAGES).map(([k, v]) => [k, v.resource])) as Record<StageId, string | undefined>;
+
+export function stageStats(r: TwinResult): Record<StageId, { work: number; wait: number; n: number; cost: number }> {
+  const acc = {} as Record<StageId, { work: number; wait: number; n: number; cost: number }>;
   const add = (id: StageId, work: number, wait: number) => {
     if (!Number.isFinite(work)) return;
-    const a = (acc[id] ??= { work: 0, wait: 0, n: 0 });
+    const a = (acc[id] ??= { work: 0, wait: 0, n: 0, cost: 0 });
     a.work += work;
     a.wait += Number.isFinite(wait) ? Math.max(0, wait) : 0;
     a.n++;
@@ -170,7 +177,15 @@ export function stageStats(r: TwinResult): Record<StageId, { work: number; wait:
     add('E5', t.grossEnd - t.grossStart, t.grossStart - t.bayEnd);
     add('E6', t.exit - t.grossEnd, 0);
   }
-  for (const k of Object.keys(acc) as StageId[]) { acc[k].work /= acc[k].n; acc[k].wait /= acc[k].n; }
+  for (const k of Object.keys(acc) as StageId[]) {
+    const a = acc[k];
+    a.work /= a.n;
+    a.wait /= a.n;
+    const res = STAGE_RESOURCE[k];
+    // работа ресурса + простой: для цистерны — плата перевозчику, для партии — незавершённое производство
+    const idleRate = k.startsWith('E') ? r.params.costIdleHour : 3000;
+    a.cost = (a.work / 60) * (res ? RESOURCE_RATE[res] : 0) + (a.wait / 60) * idleRate;
+  }
   return acc;
 }
 

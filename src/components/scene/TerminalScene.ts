@@ -5,7 +5,7 @@ import { levelAt } from '@/lib/twin/derive';
 
 /** цвета тары по рецептурам */
 const RECIPE_COLORS = [0xf59e0b, 0x2f6bff, 0x0fae9f, 0xef4444];
-import { POIS, type PoiId } from '@/lib/twin/pois';
+import { POIS, EYE, type PoiId } from '@/lib/twin/pois';
 
 /**
  * Изометрическая 3D-сцена участка технических масел на Three.js.
@@ -97,6 +97,28 @@ export class TerminalScene {
   private fly: { from: THREE.Vector3; to: THREE.Vector3; z0: number; z1: number; t: number } | null = null;
   private baseHalf = 62;
   private pinVec = new THREE.Vector3();
+  // вид от первого лица
+  private persp: THREE.PerspectiveCamera;
+  private active: THREE.Camera;
+  private eyeId: PoiId | null = null;
+  private eyeFly: { p0: THREE.Vector3; p1: THREE.Vector3; l0: THREE.Vector3; l1: THREE.Vector3; t: number; dur: number; arc: number; then?: () => void } | null = null;
+  private yaw = 0;
+  private pitch = 0;
+  private drag: { x: number; y: number; id: number } | null = null;
+  private isoDir = new THREE.Vector3(95, 150, 175).normalize();
+  private farGround: THREE.Mesh;
+  // освещение и ночь
+  private hemi!: THREE.HemisphereLight;
+  private sun!: THREE.DirectionalLight;
+  private fillLight!: THREE.DirectionalLight;
+  private night = false;
+  private beacons: THREE.MeshStandardMaterial[] = [];
+  private skyDay = skyTexture('#7fb0ee', '#eaf2fc');
+  private skyNight = skyTexture('#030816', '#1a2a4d');
+  private bgNight = radialTexture('#16233f', '#070d1c');
+  private lampMat = new THREE.MeshStandardMaterial({ color: 0x334155, emissive: 0xfff1c9, emissiveIntensity: 0 });
+  private headMat = new THREE.MeshStandardMaterial({ color: 0xf8fafc, emissive: 0xfff6dd, emissiveIntensity: 0 });
+  private tailMat = new THREE.MeshStandardMaterial({ color: 0x7f1d1d, emissive: 0xff2a2a, emissiveIntensity: 0 });
   private disposed = false;
 
   constructor(private el: HTMLElement, private opts: SceneOptions = {}) {
@@ -129,6 +151,25 @@ export class TerminalScene {
     this.camera.zoom = 1.3;
     this.camera.updateProjectionMatrix();
     this.controls.update();
+
+    this.persp = new THREE.PerspectiveCamera(55, 1, 0.1, 1500);
+    this.active = this.camera;
+    this.headMat.userData.nightEmissive = 2.4;
+    this.tailMat.userData.nightEmissive = 1.6;
+    this.lampMat.userData.nightEmissive = 2.2;
+    const fg = new THREE.Mesh(new THREE.CircleGeometry(1200, 48), new THREE.MeshStandardMaterial({ color: 0xbfd6bd, roughness: 1 }));
+    fg.rotation.x = -Math.PI / 2;
+    fg.position.y = -0.04;
+    fg.receiveShadow = true;
+    fg.visible = false;
+    this.farGround = fg;
+    this.scene.add(fg);
+    const cv = this.renderer.domElement;
+    cv.addEventListener('pointerdown', this.onDown);
+    cv.addEventListener('pointermove', this.onMove);
+    cv.addEventListener('pointerup', this.onUp);
+    cv.addEventListener('pointercancel', this.onUp);
+    cv.addEventListener('wheel', this.onWheel, { passive: false });
 
     this.lights(low);
     this.scene.add(this.root, this.dynamic, this.highlight);
@@ -164,28 +205,15 @@ export class TerminalScene {
   }
 
   focus(id: PoiId | null) {
-    while (this.highlight.children.length) {
-      const c = this.highlight.children.pop()! as THREE.Mesh;
-      c.geometry.dispose();
-    }
+    if (this.eyeId && id) { this.flyEye(id); this.drawHighlight(id); return; }
+    this.drawHighlight(id);
     const poi = id ? POIS.find((p) => p.id === id) : null;
     if (!poi) {
       this.flyTo(new THREE.Vector3(-4, 0, 0), 1.3);
       return;
     }
     const [x0, z0, x1, z1] = poi.zone;
-    const w = x1 - x0, d = z1 - z0, r = 2.2;
-    const outer = roundedRect(w, d, r);
-    const inner = roundedRect(w - 1.1, d - 1.1, Math.max(0.5, r - 0.55));
-    outer.holes.push(inner as unknown as THREE.Path);
-    const ring = new THREE.Mesh(new THREE.ShapeGeometry(outer, 6), this.highlightMat);
-    const fill = new THREE.Mesh(new THREE.ShapeGeometry(roundedRect(w, d, r), 6), this.highlightFill);
-    for (const m of [ring, fill]) {
-      m.rotation.x = -Math.PI / 2;
-      m.position.set((x0 + x1) / 2, m === ring ? 0.16 : 0.12, (z0 + z1) / 2);
-      m.renderOrder = 5;
-      this.highlight.add(m);
-    }
+    const w = x1 - x0, d = z1 - z0;
     const span = Math.max(w, d * 1.4);
     const zoom = THREE.MathUtils.clamp(70 / span, 1.5, 3);
     // смещаем фокус, чтобы зона не пряталась под карточкой точки (слева на десктопе, снизу на телефоне)
@@ -200,13 +228,168 @@ export class TerminalScene {
     this.flyTo(center, zoom);
   }
 
+  private drawHighlight(id: PoiId | null) {
+    while (this.highlight.children.length) {
+      const c = this.highlight.children.pop()! as THREE.Mesh;
+      c.geometry.dispose();
+    }
+    const poi = id ? POIS.find((p) => p.id === id) : null;
+    if (!poi) return;
+    const [x0, z0, x1, z1] = poi.zone;
+    const w = x1 - x0, d = z1 - z0, r = 2.2;
+    const outer = roundedRect(w, d, r);
+    const inner = roundedRect(w - 1.1, d - 1.1, Math.max(0.5, r - 0.55));
+    outer.holes.push(inner as unknown as THREE.Path);
+    const ring = new THREE.Mesh(new THREE.ShapeGeometry(outer, 6), this.highlightMat);
+    const fill = new THREE.Mesh(new THREE.ShapeGeometry(roundedRect(w, d, r), 6), this.highlightFill);
+    for (const m of [ring, fill]) {
+      m.rotation.x = -Math.PI / 2;
+      m.position.set((x0 + x1) / 2, m === ring ? 0.16 : 0.12, (z0 + z1) / 2);
+      m.renderOrder = 5;
+      this.highlight.add(m);
+    }
+  }
+
   resetView() { this.focus(null); }
+
+  /** Войти в вид от первого лица в точке id (или перелететь к ней, если уже внутри). null — вернуться к карте. */
+  setEye(id: PoiId | null) {
+    if (id === this.eyeId && !this.eyeFly) return;
+    if (!id) { this.exitEye(); return; }
+    if (this.eyeId) { this.flyEye(id); this.drawHighlight(id); return; }
+    // переключаемся на перспективную камеру так, чтобы кадр почти совпал с изометрией, и «ныряем» вниз
+    const target = this.controls.target.clone();
+    this.isoDir.copy(this.camera.position).sub(target).normalize();
+    const D = (this.baseHalf / this.camera.zoom) / Math.tan(THREE.MathUtils.degToRad(this.persp.fov / 2));
+    this.persp.position.copy(target).addScaledVector(this.isoDir, D);
+    this.persp.lookAt(target);
+    this.active = this.persp;
+    this.controls.enabled = false;
+    this.eyeId = id;
+    this.envForEye(true);
+    this.drawHighlight(null);
+    const e = EYE[id];
+    this.eyeFly = { p0: this.persp.position.clone(), p1: new THREE.Vector3(e.pos[0], 1.7, e.pos[1]), l0: target, l1: new THREE.Vector3(...e.look), t: 0, dur: 2.4, arc: 0 };
+  }
+
+  get inEye() { return this.eyeId !== null; }
+
+  setNight(v: boolean) {
+    this.night = v;
+    this.hemi.color.setHex(v ? 0x3b5590 : 0xf4f8ff);
+    this.hemi.groundColor.setHex(v ? 0x0b1020 : 0xc9d3de);
+    this.hemi.intensity = v ? 0.32 : 1.25;
+    this.sun.color.setHex(v ? 0x9db7ff : 0xffffff);
+    this.sun.intensity = v ? 0.35 : 2.1;
+    this.fillLight.intensity = v ? 0.08 : 0.55;
+    this.renderer.toneMappingExposure = v ? 1.25 : 0.98;
+    (this.farGround.material as THREE.MeshStandardMaterial).color.setHex(v ? 0x5d6f62 : 0xbfd6bd);
+    this.envForEye(this.eyeId !== null);
+    this.applyNight();
+    if (!v) this.beacons.forEach((b) => { b.emissiveIntensity = 0; });
+  }
+
+  private envForEye(on: boolean) {
+    this.farGround.visible = on;
+    if (on) {
+      this.scene.background = this.night ? this.skyNight : this.skyDay;
+      this.scene.fog = new THREE.Fog(this.night ? 0x1a2a4d : 0xeaf2fc, 70, 380);
+    } else {
+      this.scene.background = this.night ? this.bgNight : null;
+      this.scene.fog = null;
+    }
+  }
+
+  private applyNight() {
+    const v = this.night;
+    const seen = new Set<THREE.Material>();
+    this.scene.traverse((o) => {
+      const l = o as THREE.PointLight;
+      if ((l as THREE.Light).isLight && typeof o.userData.nightIntensity === 'number') l.intensity = v ? o.userData.nightIntensity : 0;
+      const m = (o as THREE.Mesh).material;
+      if (m) for (const mm of Array.isArray(m) ? m : [m]) seen.add(mm);
+    });
+    for (const m of [...seen, this.headMat, this.tailMat, this.lampMat]) {
+      const sm = m as THREE.MeshStandardMaterial;
+      if (typeof sm.userData?.nightEmissive === 'number') sm.emissiveIntensity = v ? sm.userData.nightEmissive : 0;
+    }
+    for (const [key, m] of mats) {
+      if (key.startsWith(`${C.glass}-`)) { m.emissive.setHex(0xffc56e); m.emissiveIntensity = v ? 0.85 : 0; }
+    }
+  }
+
+  private flyEye(id: PoiId) {
+    const e = EYE[id];
+    const p1 = new THREE.Vector3(e.pos[0], 1.7, e.pos[1]);
+    const l0 = this.persp.position.clone().add(this.lookDir().multiplyScalar(10));
+    const dist = this.persp.position.distanceTo(p1);
+    this.eyeId = id;
+    this.eyeFly = { p0: this.persp.position.clone(), p1, l0, l1: new THREE.Vector3(...e.look), t: 0, dur: THREE.MathUtils.clamp(dist / 28, 1.3, 3), arc: THREE.MathUtils.clamp(dist * 0.28, 3, 28) };
+  }
+
+  private exitEye() {
+    if (!this.eyeId) return;
+    const poi = POIS.find((p) => p.id === this.eyeId)!;
+    const [x0, z0, x1, z1] = poi.zone;
+    const center = new THREE.Vector3((x0 + x1) / 2, 0, (z0 + z1) / 2);
+    const zoom = 1.6;
+    const D = (this.baseHalf / zoom) / Math.tan(THREE.MathUtils.degToRad(this.persp.fov / 2));
+    const p1 = center.clone().addScaledVector(this.isoDir, D);
+    const l0 = this.persp.position.clone().add(this.lookDir().multiplyScalar(10));
+    this.eyeFly = {
+      p0: this.persp.position.clone(), p1, l0, l1: center, t: 0, dur: 1.8, arc: 0,
+      then: () => {
+        // точно совмещаем изометрию с последним кадром перспективы и возвращаем карту
+        this.controls.target.copy(center);
+        this.camera.position.copy(center).addScaledVector(this.isoDir, 200);
+        this.camera.zoom = zoom;
+        this.camera.updateProjectionMatrix();
+        this.active = this.camera;
+        this.controls.enabled = this.opts.interactive !== false;
+        this.controls.update();
+        this.eyeId = null;
+        this.envForEye(false);
+        this.drawHighlight(poi.id);
+      }
+    };
+  }
+
+  private lookDir() {
+    return new THREE.Vector3(Math.cos(this.pitch) * Math.sin(this.yaw), Math.sin(this.pitch), Math.cos(this.pitch) * Math.cos(this.yaw));
+  }
+
+  private onDown = (e: PointerEvent) => {
+    if (!this.eyeId || this.eyeFly) return;
+    this.drag = { x: e.clientX, y: e.clientY, id: e.pointerId };
+    (e.target as HTMLElement).setPointerCapture?.(e.pointerId);
+  };
+  private onMove = (e: PointerEvent) => {
+    if (!this.drag || this.drag.id !== e.pointerId) return;
+    const dx = e.clientX - this.drag.x, dy = e.clientY - this.drag.y;
+    this.drag.x = e.clientX; this.drag.y = e.clientY;
+    this.yaw += dx * 0.0045;
+    this.pitch = THREE.MathUtils.clamp(this.pitch + dy * 0.0035, -1.1, 0.9);
+  };
+  private onUp = (e: PointerEvent) => { if (this.drag?.id === e.pointerId) this.drag = null; };
+  private onWheel = (e: WheelEvent) => {
+    if (!this.eyeId) return;
+    e.preventDefault();
+    this.persp.fov = THREE.MathUtils.clamp(this.persp.fov + e.deltaY * 0.03, 30, 75);
+    this.persp.updateProjectionMatrix();
+  };
+
 
   dispose() {
     this.disposed = true;
     cancelAnimationFrame(this.raf);
     this.ro.disconnect();
     document.removeEventListener('visibilitychange', this.onVisibility);
+    const cv = this.renderer.domElement;
+    cv.removeEventListener('pointerdown', this.onDown);
+    cv.removeEventListener('pointermove', this.onMove);
+    cv.removeEventListener('pointerup', this.onUp);
+    cv.removeEventListener('pointercancel', this.onUp);
+    cv.removeEventListener('wheel', this.onWheel);
     this.controls.dispose();
     this.scene.traverse((o) => {
       const m = o as THREE.Mesh;
@@ -220,8 +403,10 @@ export class TerminalScene {
   /* ---------- окружение ---------- */
 
   private lights(low: boolean) {
-    this.scene.add(new THREE.HemisphereLight(0xf4f8ff, 0xc9d3de, 1.25));
+    this.hemi = new THREE.HemisphereLight(0xf4f8ff, 0xc9d3de, 1.25);
+    this.scene.add(this.hemi);
     const sun = new THREE.DirectionalLight(0xffffff, 2.1);
+    this.sun = sun;
     sun.position.set(-70, 130, 80);
     sun.castShadow = true;
     sun.shadow.mapSize.set(low ? 1024 : 2048, low ? 1024 : 2048);
@@ -233,6 +418,7 @@ export class TerminalScene {
     this.scene.add(sun);
     const fillL = new THREE.DirectionalLight(0xdfe9ff, 0.55);
     fillL.position.set(120, 60, -40);
+    this.fillLight = fillL;
     this.scene.add(fillL);
   }
 
@@ -466,6 +652,11 @@ export class TerminalScene {
       lvl.position.y = 1.5;
       lvl.userData.full = h - 3.2;
       this.levelBars.push(lvl);
+      const bm = new THREE.MeshStandardMaterial({ color: 0x7f1d1d, emissive: 0xff2020, emissiveIntensity: 0 });
+      this.beacons.push(bm);
+      const beacon = new THREE.Mesh(new THREE.SphereGeometry(0.28, 10, 8), bm);
+      beacon.position.set(x, h + 1.45, z);
+      this.root.add(beacon);
       const lab = this.label(p.name, p.color);
       lab.position.set(x + 1.6, 5.2, z + r + 0.08);
       this.root.add(lab);
@@ -667,6 +858,13 @@ export class TerminalScene {
       for (const px of [41.6, 48, 54.4]) this.box(0.18, 3.8, 0.18, rackM, px, 0.27, rz - 1.1, this.root, false);
       for (const px of [41.6, 48, 54.4]) this.box(0.18, 3.8, 0.18, rackM, px, 0.27, rz + 1.1, this.root, false);
     }
+    // освещение цеха и склада
+    for (const [lx, lz, it] of [[18, 40, 70], [31, 40, 70], [48, 40, 60]] as const) {
+      const pl = new THREE.PointLight(0xfff0d6, 0, 26, 1.5);
+      pl.position.set(lx, 4.6, lz);
+      pl.userData.nightIntensity = it;
+      this.root.add(pl);
+    }
     // погрузчик
     this.box(1.6, 1.1, 2.4, mat(C.orange), 47, 0.27, 43.2);
     this.box(1.4, 1.2, 0.6, mat(C.dark), 47, 1.37, 42.6);
@@ -753,7 +951,11 @@ export class TerminalScene {
     // фонари
     for (const [x, z] of [[-30, 14], [-2, 28], [30, 24], [30, -20], [-60, 12], [-60, -8]] as const) {
       this.cyl(0.12, 0.16, 7, mat(C.steel, { metalness: 0.5 }), x, 0, z, 8);
-      this.box(1.6, 0.25, 0.5, mat(C.dark), x + 0.6, 7, z);
+      this.box(1.6, 0.25, 0.5, this.lampMat, x + 0.6, 7, z);
+      const pl = new THREE.PointLight(0xffe2b0, 0, 34, 1.6);
+      pl.position.set(x + 0.6, 6.6, z);
+      pl.userData.nightIntensity = 90;
+      this.root.add(pl);
     }
   }
 
@@ -813,7 +1015,18 @@ export class TerminalScene {
       for (const x of [BAY_X - 13, BAY_X, BAY_X + 13]) this.box(0.6, 7.4, 0.6, mat(C.steel, { metalness: 0.45 }), x, 0, z, g);
     }
     zs.forEach((z) => this.box(0.5, 7.4, 0.5, mat(C.steel, { metalness: 0.45 }), BAY_X - 6, 0.35, z - 2.75, g));
+    // ночное освещение навеса: светильники и панели под кровлей
+    const panelM = new THREE.MeshStandardMaterial({ color: 0xf8fafc, emissive: 0xe8f0ff, emissiveIntensity: 0 });
+    panelM.userData.nightEmissive = 1.8;
+    for (const x of [BAY_X - 8, BAY_X + 8]) {
+      this.box(5, 0.12, roofD - 3, panelM, x, 7.1, cz, g, false);
+      const pl = new THREE.PointLight(0xe6efff, 0, 30, 1.5);
+      pl.position.set(x, 6.6, cz);
+      pl.userData.nightIntensity = 140;
+      g.add(pl);
+    }
     this.root.add(g);
+    if (this.hemi) this.applyNight();
   }
 
   /* ---------- автоцистерны ---------- */
@@ -850,6 +1063,11 @@ export class TerminalScene {
     add(G.cap, tankM, -4.7, 2.45, 0, Math.PI / 2);
     for (const bx of [-3.6, -0.9, 1.8]) add(G.band, mat(accent, { roughness: 0.5 }), bx, 2.45, 0, Math.PI / 2);
     for (const wx of [-3.8, -2.6, 3.9]) for (const wz of [-1.05, 1.05]) add(G.wheel, mat(0x1f2937), wx, 0.55, wz, 0, Math.PI / 2);
+    G.lamp ??= new THREE.BoxGeometry(0.08, 0.32, 0.5);
+    for (const lz of [-0.82, 0.82]) {
+      add(G.lamp, this.headMat, 5.36, 1.55, lz);
+      add(G.lamp, this.tailMat, -5.0, 1.0, lz);
+    }
     g.scale.setScalar(0.95);
     return g;
   }
@@ -1044,6 +1262,9 @@ export class TerminalScene {
     this.camera.top = hh;
     this.camera.bottom = -hh;
     this.camera.updateProjectionMatrix();
+    this.persp.aspect = aspect;
+    this.persp.fov = aspect < 0.9 ? 68 : 55;
+    this.persp.updateProjectionMatrix();
     this.renderer.setSize(w, h, false);
     this.renderer.domElement.style.width = '100%';
     this.renderer.domElement.style.height = '100%';
@@ -1068,21 +1289,45 @@ export class TerminalScene {
       this.camera.updateProjectionMatrix();
       if (this.fly.t >= 1) this.fly = null;
     }
-    this.controls.update();
+    if (this.eyeFly) {
+      const f = this.eyeFly;
+      f.t = Math.min(1, f.t + dt / f.dur);
+      const e = f.t < 0.5 ? 4 * f.t ** 3 : 1 - Math.pow(-2 * f.t + 2, 3) / 2;
+      this.persp.position.lerpVectors(f.p0, f.p1, e);
+      this.persp.position.y += Math.sin(Math.PI * e) * f.arc;
+      const look = new THREE.Vector3().lerpVectors(f.l0, f.l1, e);
+      this.persp.lookAt(look);
+      if (f.t >= 1) {
+        const d = f.l1.clone().sub(f.p1).normalize();
+        this.yaw = Math.atan2(d.x, d.z);
+        this.pitch = Math.asin(THREE.MathUtils.clamp(d.y, -1, 1));
+        this.eyeFly = null;
+        f.then?.();
+      }
+    } else if (this.eyeId) {
+      this.persp.lookAt(this.persp.position.clone().add(this.lookDir()));
+    }
+    if (this.active === this.camera) this.controls.update();
     if (this.opts.getTime) { const c = this.opts.getTime(); this.simTime = c.t; this.simSpeed = c.speed; }
     this.updateTrucks(dt);
     const tnow = performance.now() / 1000;
     this.arrows.forEach((m) => { m.opacity = 0.35 + 0.6 * Math.max(0, Math.sin(tnow * 2.2 - (m.userData.phase as number) * 0.9)); });
     const hm = 0.65 + 0.35 * Math.sin(tnow * 3);
     this.highlightMat.opacity = hm;
-    this.renderer.render(this.scene, this.camera);
+    if (this.night) {
+      const blink = Math.sin(tnow * 3.2) > 0.55 ? 2.4 : 0.15;
+      this.beacons.forEach((b) => { b.emissiveIntensity = blink; });
+    }
+    this.renderer.render(this.scene, this.active);
 
     if (this.opts.onPins) {
       const w = this.el.clientWidth, h = this.el.clientHeight;
       const out = {} as Record<PoiId, PinScreen>;
       for (const p of POIS) {
-        this.pinVec.set(p.anchor[0], p.anchor[1], p.anchor[2]).project(this.camera);
-        out[p.id] = { x: (this.pinVec.x * 0.5 + 0.5) * w, y: (-this.pinVec.y * 0.5 + 0.5) * h, visible: Math.abs(this.pinVec.x) < 1.05 && Math.abs(this.pinVec.y) < 1.05 };
+        this.pinVec.set(p.anchor[0], p.anchor[1], p.anchor[2]);
+        const far = this.active === this.persp && this.pinVec.distanceTo(this.persp.position) > 58;
+        this.pinVec.project(this.active);
+        out[p.id] = { x: (this.pinVec.x * 0.5 + 0.5) * w, y: (-this.pinVec.y * 0.5 + 0.5) * h, visible: !far && this.pinVec.z < 1 && Math.abs(this.pinVec.x) < 1.05 && Math.abs(this.pinVec.y) < 1.05 };
       }
       this.opts.onPins(out);
     }
@@ -1128,4 +1373,33 @@ function tube(points: THREE.Vector3[], r: number, m: THREE.Material, parent: THR
     joint.position.copy(b);
     parent.add(joint);
   }
+}
+
+function skyTexture(top: string, bottom: string) {
+  const cv = document.createElement('canvas');
+  cv.width = 4; cv.height = 256;
+  const ctx = cv.getContext('2d')!;
+  const g = ctx.createLinearGradient(0, 0, 0, 256);
+  g.addColorStop(0, top);
+  g.addColorStop(0.62, bottom);
+  g.addColorStop(1, bottom);
+  ctx.fillStyle = g;
+  ctx.fillRect(0, 0, 4, 256);
+  const t = new THREE.CanvasTexture(cv);
+  t.colorSpace = THREE.SRGBColorSpace;
+  return t;
+}
+
+function radialTexture(inner: string, outer: string) {
+  const cv = document.createElement('canvas');
+  cv.width = 256; cv.height = 256;
+  const ctx = cv.getContext('2d')!;
+  const g = ctx.createRadialGradient(128, 110, 10, 128, 128, 200);
+  g.addColorStop(0, inner);
+  g.addColorStop(1, outer);
+  ctx.fillStyle = g;
+  ctx.fillRect(0, 0, 256, 256);
+  const t = new THREE.CanvasTexture(cv);
+  t.colorSpace = THREE.SRGBColorSpace;
+  return t;
 }

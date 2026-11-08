@@ -1,7 +1,7 @@
 'use client';
 
-import { useMemo } from 'react';
-import { ArrowRight, ChevronLeft, ChevronRight, Info, Lock, Maximize2, Pause, Play, Sparkles, X, Truck, Package, Cylinder, FlaskConical } from 'lucide-react';
+import { useEffect, useMemo, useState } from 'react';
+import { ArrowRight, ChevronLeft, ChevronRight, Info, Lock, Maximize2, Pause, Play, Sparkles, X, Truck, Package, Cylinder, FlaskConical, Moon, Sun, Eye, Map as MapIcon, Clapperboard, Square, Move } from 'lucide-react';
 import SceneView from '@/components/scene/SceneView';
 import { Stepper, Switch } from '@/components/ui/Stepper';
 import { fmtClock, RESOURCE_LABEL, type TwinParams, type TwinResult } from '@/lib/twin/sim';
@@ -34,6 +34,7 @@ interface Props {
   selected: PoiId | null;
   setSelected: (id: PoiId | null) => void;
   goProcess: () => void;
+  goCompare: () => void;
 }
 
 const SPEEDS = [{ v: 60, l: '×60' }, { v: 240, l: '×240' }, { v: 720, l: '×720' }];
@@ -56,9 +57,52 @@ export default function TourView(p: Props) {
   const res = poi?.resource ? result.resources.find((r) => r.id === poi.resource) : null;
   const end = result.horizon;
 
+  const [eye, setEye] = useState(false);
+  const [night, setNight] = useState(false);
+  const [auto, setAuto] = useState<number | null>(null); // шаг автоэкскурсии
+  const [summary, setSummary] = useState(false);
+  const STEP_MS = 8500;
+
+  // автоэкскурсия: камера сама проходит путь масла от цистерны до склада
+  useEffect(() => {
+    if (auto === null) return;
+    p.setSelected(TOUR_ORDER[auto]);
+    const id = setTimeout(() => {
+      if (auto + 1 < TOUR_ORDER.length) setAuto(auto + 1);
+      else { setAuto(null); setEye(false); p.setSelected(null); setSummary(true); report('info', 'tour.auto', 'Автоэкскурсия завершена'); }
+    }, STEP_MS);
+    return () => clearTimeout(id);
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [auto]);
+
+  useEffect(() => {
+    const onKey = (e: KeyboardEvent) => {
+      if (e.key !== 'Escape') return;
+      if (auto !== null) { setAuto(null); return; }
+      if (eye) { setEye(false); return; }
+      if (summary) setSummary(false);
+    };
+    window.addEventListener('keydown', onKey);
+    return () => window.removeEventListener('keydown', onKey);
+  }, [auto, eye, summary]);
+
+  const startAuto = () => {
+    setSummary(false);
+    setEye(true);
+    setAuto(0);
+    if (!p.playing) p.setPlaying(true);
+    report('info', 'tour.auto', 'Запущена автоэкскурсия по пути масла');
+  };
+  const stopAuto = () => setAuto(null);
+  const toggleEye = () => {
+    if (!eye && !p.selected) p.setSelected(TOUR_ORDER[0]);
+    setEye(!eye);
+    if (auto !== null && eye) setAuto(null);
+  };
+
   return (
     <div className="tour">
-      <section className="tour-stage card" aria-label="3D-тур по участку масел">
+      <section className={`tour-stage card ${night ? 'is-night' : ''} ${eye ? 'is-eye' : ''}`} aria-label="3D-тур по участку масел">
         <SceneView
           className="tour-scene"
           result={result}
@@ -66,6 +110,8 @@ export default function TourView(p: Props) {
           selected={p.selected}
           onSelect={(id) => { p.setSelected(id === p.selected ? null : id); if (id !== p.selected) report('info', 'tour.poi', `Просмотр точки «${POIS.find((x) => x.id === id)!.title}»`); }}
           statuses={statuses}
+          eye={eye}
+          night={night}
         />
 
         <div className="hud-top">
@@ -77,12 +123,15 @@ export default function TourView(p: Props) {
           </div>
           <div className="hud-actions">
             <div className="legend kpi-hide-sm"><span><i className="lg-ext" />приём</span><span><i className="lg-shared" />общее</span><span><i className="lg-int" />производство</span></div>
-            <button className="icon-btn" onClick={() => p.setSelected(null)} aria-label="Показать всю базу" title="Вся база"><Maximize2 size={17} /></button>
+            <button className={`hud-btn ${eye ? 'on' : ''}`} onClick={toggleEye} aria-pressed={eye} title="Вид от первого лица">{eye ? <MapIcon size={16} /> : <Eye size={16} />}<span>{eye ? 'К карте' : 'От первого лица'}</span></button>
+            <button className={`hud-btn ${night ? 'on night' : ''}`} onClick={() => setNight(!night)} aria-pressed={night} title="Ночной режим">{night ? <Sun size={16} /> : <Moon size={16} />}<span>{night ? 'День' : 'Ночь'}</span></button>
+            {!eye && <button className="icon-btn" onClick={() => p.setSelected(null)} aria-label="Показать весь участок" title="Весь участок"><Maximize2 size={17} /></button>}
           </div>
         </div>
 
         {poi && (
-          <article className="poi-card rise" key={poi.id} aria-live="polite">
+          <article className={`poi-card rise ${auto !== null ? 'is-auto' : ''}`} key={poi.id} aria-live="polite">
+            {auto !== null && <div className="auto-bar"><i style={{ animationDuration: `${STEP_MS}ms` }} /></div>}
             <header>
               <span className={`poi-n ${poi.process}`}>{poi.n}</span>
               <div>
@@ -103,15 +152,54 @@ export default function TourView(p: Props) {
               <button className="btn btn-ghost btn-sm" onClick={() => go(-1)} aria-label="Предыдущая точка"><ChevronLeft size={16} /></button>
               <span className="num poi-step">{idx + 1} / {TOUR_ORDER.length}</span>
               <button className="btn btn-ghost btn-sm" onClick={() => go(1)} aria-label="Следующая точка"><ChevronRight size={16} /></button>
-              <button className="btn btn-soft btn-sm poi-go" onClick={p.goProcess}>Этап в двойнике <ArrowRight size={15} /></button>
+              {auto !== null
+                ? <button className="btn btn-ghost btn-sm poi-go" onClick={stopAuto}><Square size={13} fill="currentColor" /> Стоп</button>
+                : <>
+                    {!eye && <button className="btn btn-ghost btn-sm" onClick={toggleEye} title="Посмотреть от первого лица"><Eye size={15} /></button>}
+                    <button className="btn btn-soft btn-sm poi-go" onClick={p.goProcess}>Этап в двойнике <ArrowRight size={15} /></button>
+                  </>}
             </footer>
           </article>
         )}
 
-        {!poi && (
-          <button className="tour-start rise" onClick={() => go(1)}>
-            <span><Play size={14} fill="currentColor" /></span> Экскурсия: путь масла за {TOUR_ORDER.length} шагов
-          </button>
+        {!poi && !summary && (
+          <div className="tour-start-row rise">
+            <button className="tour-start" onClick={startAuto}>
+              <span><Clapperboard size={15} /></span> Автоэкскурсия: путь масла
+            </button>
+            <button className="tour-start ghost" onClick={() => go(1)}>По шагам · {TOUR_ORDER.length}</button>
+          </div>
+        )}
+
+        {eye && auto === null && (
+          <div className="eye-hint rise"><Move size={14} /> Перетаскивайте, чтобы осмотреться · колесо — приближение · Esc — к карте</div>
+        )}
+
+        {summary && (
+          <div className="summary-wrap" role="dialog" aria-label="Итог экскурсии">
+            <article className="summary rise">
+              <button className="icon-btn summary-x" onClick={() => setSummary(false)} aria-label="Закрыть"><X size={16} /></button>
+              <span className="poi-kicker">Итог экскурсии</span>
+              <h2>От автоцистерны до бочки</h2>
+              <ol className="summary-chain">
+                {['Цистерна', 'Приём', 'Резервуары', 'Подача', 'Смешивание', 'Контроль', 'Фасовка', 'Склад'].map((x, i) => <li key={x} className={i < 2 ? 'ext' : i === 2 ? 'shared' : 'int'}>{x}</li>)}
+              </ol>
+              <div className="summary-stats">
+                {rows.filter((r) => ['turn', 'plan', 'margin'].includes(r.key)).map((r) => (
+                  <div key={r.key} className={rowTone(r)}>
+                    <span>{r.label}</span>
+                    <b className="num">{r.format(r.b)}<small> {r.unit}</small></b>
+                    <em className="num">было {r.format(r.a)}</em>
+                  </div>
+                ))}
+              </div>
+              <div className={`insight ${ins.tone}`}><Info size={20} /><div><b>{ins.title}</b><span>{ins.text}</span></div></div>
+              <div className="summary-actions">
+                <button className="btn btn-primary" onClick={p.goCompare}>Сравнить все сценарии <ArrowRight size={16} /></button>
+                <button className="btn btn-ghost" onClick={startAuto}><Clapperboard size={16} /> Ещё раз</button>
+              </div>
+            </article>
+          </div>
         )}
 
         <div className="timeline">
