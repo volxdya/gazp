@@ -91,7 +91,8 @@
 .ov { display: grid; gap: 16px; }
 .ov-grid { display: grid; grid-template-columns: minmax(0, 1fr); gap: 16px; align-items: start; }
 .ov-scheme { position: relative; overflow: hidden; }
-.ov-side { display: grid; grid-template-columns: repeat(3, minmax(0, 1fr)); gap: 16px; align-items: start; }
+.ov-side { display: grid; gap: 16px; }
+.res-grid { grid-template-columns: repeat(auto-fit, minmax(240px, 1fr)); column-gap: 32px; }
 .ov-poi { position: absolute; left: 14px; bottom: 14px; width: min(360px, calc(100% - 28px)); display: flex; gap: 16px; align-items: center; justify-content: space-between; background: rgba(255,255,255,.97); border: 1px solid var(--line); border-radius: 12px; padding: 12px 14px; box-shadow: var(--sh-2); }
 .ov-poi > div { display: grid; gap: 1px; min-width: 0; }
 .ov-poi b { font-size: 15px; font-weight: 650; }

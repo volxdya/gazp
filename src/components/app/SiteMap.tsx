@@ -150,12 +150,9 @@ export default function SiteMap({ result, time, selected, onOpen }: { result: Tw
 
         {/* легенда в свободном углу */}
         <g transform={`translate(40, ${L3 + 8})`} className="legend-svg">
-          <line x1={0} y1={6} x2={26} y2={6} className="pipe ext on" /><text x={36} y={10}>слив в резервуар</text>
-          <line x1={0} y1={34} x2={26} y2={34} className="pipe int on" /><text x={36} y={38}>подача в цех</text>
-          <line x1={0} y1={62} x2={26} y2={62} className="sample" /><text x={36} y={66}>проба в лабораторию</text>
-          <rect x={0} y={84} width={12} height={12} rx={3} className="truck a" /><text x={20} y={94}>A</text>
-          <rect x={44} y={84} width={12} height={12} rx={3} className="truck b" /><text x={64} y={94}>B</text>
-          <text x={0} y={124} className="hint">Нажмите на зону — фото и детали</text>
+          <line x1={0} y1={6} x2={26} y2={6} className="pipe ext on" /><text x={36} y={10}>слив</text>
+          <line x1={0} y1={34} x2={26} y2={34} className="pipe int on" /><text x={36} y={38}>подача</text>
+          <line x1={0} y1={62} x2={26} y2={62} className="sample" /><text x={36} y={66}>проба</text>
         </g>
 
         {TILES.map((t) => {
