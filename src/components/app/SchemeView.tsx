@@ -1,9 +1,8 @@
 'use client';
 
 import { useMemo } from 'react';
-import { ArrowRight, Box, Pause, Play } from 'lucide-react';
-import { fmtClock, type TruckTrace, type TwinResult } from '@/lib/twin/sim';
-import { POIS, PROCESS_LABEL, type PoiId } from '@/lib/twin/pois';
+import type { TruckTrace, TwinResult } from '@/lib/twin/sim';
+import { POIS, type PoiId } from '@/lib/twin/pois';
 import { fmt, liveAt, pinStatuses } from '@/lib/twin/derive';
 
 /**
@@ -37,15 +36,12 @@ function truckSpot(t: TruckTrace, now: number, order: Map<number, number>, nBays
 interface Props {
   result: TwinResult;
   time: number;
-  playing: boolean;
-  setPlaying: (v: boolean) => void;
-  seek: (t: number) => void;
   selected: PoiId | null;
-  setSelected: (id: PoiId | null) => void;
-  open3d: (id: PoiId) => void;
+  onSelect: (id: PoiId | null) => void;
 }
 
-export default function SchemeView({ result, time, playing, setPlaying, seek, selected, setSelected, open3d }: Props) {
+/** Мнемосхема участка — компонент для главной страницы */
+export function SchemeSvg({ result, time, selected, onSelect }: Props) {
   const live = useMemo(() => liveAt(result, time), [result, time]);
   const st = useMemo(() => pinStatuses(result, live), [result, live]);
   const p = result.params;
@@ -62,24 +58,13 @@ export default function SchemeView({ result, time, playing, setPlaying, seek, se
 
   const unloading = live.unloading > 0;
   const feeding = live.pumpBusy && live.blending > 0;
-  const poi = selected ? POIS.find((x) => x.id === selected)! : null;
   const zone = (id: PoiId) => POIS.find((x) => x.id === id)!.zone;
-  const sel = (id: PoiId) => ({ onClick: () => setSelected(selected === id ? null : id), className: `hz ${selected === id ? 'on' : ''}`, role: 'button', tabIndex: 0, 'aria-label': POIS.find((x) => x.id === id)!.title, onKeyDown: (e: React.KeyboardEvent) => { if (e.key === 'Enter' || e.key === ' ') { e.preventDefault(); setSelected(id); } } });
+  const sel = (id: PoiId) => ({ onClick: () => onSelect(selected === id ? null : id), className: `hz ${selected === id ? 'on' : ''}`, role: 'button', tabIndex: 0, 'aria-label': POIS.find((x) => x.id === id)!.title, onKeyDown: (e: React.KeyboardEvent) => { if (e.key === 'Enter' || e.key === ' ') { e.preventDefault(); onSelect(id); } } });
   const hot = (id: PoiId) => { const [x0, z0, x1, z1] = zone(id); return <rect x={X(x0)} y={Y(z0)} width={(x1 - x0) * K} height={(z1 - z0) * K} rx={14} {...sel(id)} />; };
   const tankX = [0, 12, 24, 36];
 
   return (
-    <div className="scheme">
-      <section className="card scheme-stage">
-        <header className="sec-head">
-          <div><h2>Схема участка</h2><p>Мнемосхема в реальном времени модели: цистерны, уровни, потоки и состояние оборудования</p></div>
-          <div className="scheme-clock">
-            <button className="play sm" onClick={() => setPlaying(!playing)} aria-label={playing ? 'Пауза' : 'Запустить'}>{playing ? <Pause size={16} fill="currentColor" /> : <Play size={16} fill="currentColor" />}</button>
-            <b className="num">{fmtClock(time)}</b>
-            <input type="range" className="scrub" min={0} max={Math.ceil(result.horizon)} step={0.5} value={Math.min(time, result.horizon)} onChange={(e) => seek(Number(e.target.value))} aria-label="Время смены" style={{ '--fill': `${(Math.min(time, result.horizon) / result.horizon) * 100}%` } as React.CSSProperties} />
-          </div>
-        </header>
-        <div className="scheme-wrap">
+    <div className="scheme-wrap">
           <svg viewBox={`0 0 ${W} ${H}`} className="scheme-svg" role="img" aria-label="Мнемосхема участка технических масел">
             <defs>
               <pattern id="grid" width={K * 4} height={K * 4} patternUnits="userSpaceOnUse"><path d={`M ${K * 4} 0 L 0 0 0 ${K * 4}`} fill="none" stroke="#e6ebf2" strokeWidth="1" /></pattern>
@@ -95,8 +80,6 @@ export default function SchemeView({ result, time, playing, setPlaying, seek, se
             <rect x={X(-32)} y={Y(27)} width={36 * K} height={25 * K} rx={10} className="s-road" />
             <line x1={X(-90)} y1={Y(SOUTH)} x2={X(-18)} y2={Y(SOUTH)} className="s-dash" markerEnd="url(#arr)" />
             <line x1={X(36)} y1={Y(NORTH)} x2={X(-88)} y2={Y(NORTH)} className="s-dash" markerEnd="url(#arr)" />
-            <text x={X(-86)} y={Y(SOUTH) - 22} className="s-small">въезд цистерн</text>
-            <text x={X(-86)} y={Y(NORTH) + 30} className="s-small">выезд</text>
 
             {/* трубопроводы */}
             <path d={`M ${X(14)} ${Y(-12)} L ${X(14)} ${Y(-16)} L ${X(44)} ${Y(-16)} L ${X(44)} ${Y(-27)}`} className={`s-pipe ext ${unloading ? 'flow' : ''}`} />
@@ -117,8 +100,6 @@ export default function SchemeView({ result, time, playing, setPlaying, seek, se
             {/* здание: диспетчерская + лаборатория */}
             <rect x={X(-58)} y={Y(-10)} width={26 * K} height={18 * K} rx={8} className="s-bld" />
             <rect x={X(-40)} y={Y(-10)} width={8 * K} height={18 * K} rx={6} className={`s-lab ${live.labBusy ? 'busy' : ''}`} />
-            <text x={X(-56)} y={Y(-1)} className="s-label">Диспетчерская</text>
-            <text x={X(-39.2)} y={Y(-1)} className="s-label sm">Лаб.</text>
 
             {/* площадка ожидания */}
             {Array.from({ length: 12 }, (_, s) => { const x = s < 6 ? -28 + s * 5.5 : -25.25 + (s - 6) * 5.5; const z = s < 6 ? 33 : 45.5; return <rect key={s} x={X(x - 2)} y={Y(z - 5)} width={4 * K} height={10 * K} rx={3} className="s-slot" />; })}
@@ -155,7 +136,6 @@ export default function SchemeView({ result, time, playing, setPlaying, seek, se
             })}
             {/* насосная */}
             <rect x={X(45.5)} y={Y(-35)} width={9 * K} height={7 * K} rx={6} className={`s-bld pump ${live.pumpBusy ? 'busy' : ''}`} />
-            <text x={X(46.6)} y={Y(-31)} className="s-label sm">Насосная</text>
 
             {/* цех: смесители, линия, склад */}
             <rect x={X(10)} y={Y(30)} width={46 * K} height={20 * K} rx={10} className="s-hall" />
@@ -168,9 +148,7 @@ export default function SchemeView({ result, time, playing, setPlaying, seek, se
             ))}
             <rect x={X(15)} y={Y(39.25)} width={22 * K} height={1.5 * K} rx={4} className={`s-line ${live.lineBusy ? 'busy' : ''}`} />
             {live.lineBusy > 0 && Array.from({ length: 8 }, (_, i) => <circle key={i} cx={X(16 + ((i * 2.8 + time * 3) % 21))} cy={Y(40)} r={4} className="s-drum" />)}
-            <text x={X(20)} y={Y(37)} className="s-label sm">Фасовка</text>
             {Array.from({ length: 12 }, (_, i) => <rect key={i} x={X(42 + (i % 4) * 3.4)} y={Y(32 + Math.floor(i / 4) * 5.5)} width={2.6 * K} height={2.2 * K} rx={3} className={`s-pallet ${i < Math.floor(live.packed / 60) ? 'on' : ''}`} />)}
-            <text x={X(42)} y={Y(49)} className="s-label sm">Склад</text>
 
             {/* автоцистерны */}
             {trucks.map(({ t, spot }) => (
@@ -181,60 +159,20 @@ export default function SchemeView({ result, time, playing, setPlaying, seek, se
             ))}
 
             {/* зоны-кнопки и подписи */}
-            {POIS.map((x) => <g key={x.id}>{hot(x.id)}</g>)}
+            {POIS.map((x) => <g key={x.id}>{hot(x.id)}<title>{`${x.title}: ${st[x.id].text}`}</title></g>)}
             {POIS.map((x) => {
               const [x0, z0] = TAG_POS[x.id] ?? x.zone;
-              const s = st[x.id];
-              const w = x.title.length * 8.4 + 40 + s.text.length * 6.6;
+              const w = x.title.length * 7.6 + 34;
               const tx = Math.min(X(x0) + 6, W - w - 10);
               return (
-                <g key={`l${x.id}`} className="s-tag" transform={`translate(${tx}, ${Y(z0) - 12})`} pointerEvents="none">
-                  <rect width={w} height={24} rx={8} className={`tag ${x.process} ${selected === x.id ? 'on' : ''}`} />
-                  <text x={10} y={16} className="tag-n">{x.n}</text>
-                  <text x={26} y={16} className="tag-t">{x.title}</text>
-                  <text x={34 + x.title.length * 8.4} y={16} className={`tag-s ${s.tone}`}>{s.text}</text>
+                <g key={`l${x.id}`} className="s-tag" transform={`translate(${tx}, ${Y(z0) - 11})`} pointerEvents="none">
+                  <rect width={w} height={22} rx={6} className={`tag ${x.process} ${selected === x.id ? 'on' : ''}`} />
+                  <circle cx={12} cy={11} r={4} className={`tag-dot ${x.process}`} />
+                  <text x={22} y={15} className="tag-t">{x.title}</text>
                 </g>
               );
             })}
           </svg>
-        </div>
-        <div className="scheme-legend">
-          <span><i className="lg-ext" /> приём автоцистерн</span>
-          <span><i className="lg-shared" /> общие ресурсы</span>
-          <span><i className="lg-int" /> производство</span>
-          <span><i className="lg-flow" /> поток продукта</span>
-          <span><i className="lg-sample" /> движение проб</span>
-          <span><i className="lg-ta" /> цистерна с A</span>
-          <span><i className="lg-tb" /> цистерна с B</span>
-        </div>
-      </section>
-
-      <aside className="card scheme-side">
-        {poi ? (
-          <div className="ss-poi rise" key={poi.id}>
-            <span className="poi-kicker">{PROCESS_LABEL[poi.process]}</span>
-            <h2>{poi.n}. {poi.title}</h2>
-            <p>{poi.about}</p>
-            <div className="ss-status"><span>Сейчас</span><b className={`tone-${st[poi.id].tone}`}>{st[poi.id].text}</b></div>
-            <button className="btn btn-primary btn-block" onClick={() => open3d(poi.id)}><Box size={16} /> Открыть в 3D-туре <ArrowRight size={15} /></button>
-          </div>
-        ) : (
-          <div className="ss-poi">
-            <span className="poi-kicker">Путь масла</span>
-            <h2>Нажмите на зону схемы</h2>
-            <p>Узнаете, что там происходит сейчас, и сможете перейти к этому месту в 3D-туре.</p>
-          </div>
-        )}
-        <ol className="ss-chain">
-          {['Автоцистерна', 'Приём', 'Резервуары', 'Подача в цех', 'Смешивание', 'Контроль качества', 'Фасовка', 'Склад'].map((s, i) => <li key={s} className={i < 2 ? 'ext' : i === 2 ? 'shared' : 'int'}><span>{i + 1}</span>{s}</li>)}
-        </ol>
-        <div className="ss-kpi">
-          <div><span>Цистерн на базе</span><b className="num">{live.onSite}</b></div>
-          <div><span>Слито сырья</span><b className="num">{fmt.int(live.received)} м³</b></div>
-          <div><span>Партий готово</span><b className="num">{live.batchesDone} / {p.batches}</b></div>
-          <div><span>Бочек на складе</span><b className="num">{fmt.int(live.packed)}</b></div>
-        </div>
-      </aside>
     </div>
   );
 }

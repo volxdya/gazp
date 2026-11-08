@@ -52,8 +52,7 @@ export default function LoginForm() {
         <button role="tab" aria-selected={mode === 'register'} className={mode === 'register' ? 'on' : ''} onClick={() => { setMode('register'); setError(null); }}>Регистрация</button>
       </div>
 
-      <h2>{mode === 'login' ? 'С возвращением' : 'Создать аккаунт'}</h2>
-      <p className="auth-sub">{mode === 'login' ? 'Войдите, чтобы открыть цифровой двойник участка масел.' : 'Новый пользователь получает роль «Экскурсант». Роль повышает руководитель.'}</p>
+      <h2>{mode === 'login' ? 'Вход' : 'Регистрация'}</h2>
 
       <form
         className="auth-form"
@@ -92,8 +91,7 @@ export default function LoginForm() {
           <label className="consent">
             <input type="checkbox" checked={consent} onChange={(e) => setConsent(e.target.checked)} />
             <span>
-              Даю согласие на обработку моих персональных данных (имя, e-mail) в соответствии с Федеральным законом № 152-ФЗ
-              и <Link href="/privacy" target="_blank">Политикой обработки персональных данных</Link>. Согласие можно отозвать в любой момент.
+              Согласен на обработку персональных данных по 152-ФЗ и <Link href="/privacy" target="_blank">политике</Link>
             </span>
           </label>
         )}
@@ -108,7 +106,7 @@ export default function LoginForm() {
 
       {mode === 'login' && (
         <div className="demo">
-          <div className="demo-sep"><span>демо-доступ для жюри</span></div>
+          <div className="demo-sep"><span>демо</span></div>
           <div className="demo-grid">
             <button className="demo-btn" onClick={() => submit(DEMO.admin, '/api/auth/login', 'admin')} disabled={!!busy}><span className="r-ic o"><ShieldCheck size={17} /></span><b>Руководитель</b></button>
             <button className="demo-btn" onClick={() => submit(DEMO.operator, '/api/auth/login', 'operator')} disabled={!!busy}><span className="r-ic b"><Workflow size={17} /></span><b>Диспетчер</b></button>

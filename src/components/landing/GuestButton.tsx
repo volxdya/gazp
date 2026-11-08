@@ -1,7 +1,6 @@
 'use client';
 
 import { useState } from 'react';
-import { Eye } from 'lucide-react';
 
 export const DEMO = {
   admin: { email: 'admin@neftebaza.demo', password: 'Admin#2026' },
@@ -16,5 +15,5 @@ export default function GuestButton({ className = 'btn btn-ghost btn-lg', label 
     const r = await fetch('/api/auth/login', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(DEMO.guest) }).catch(() => null);
     window.location.href = r?.ok ? '/app' : '/login';
   };
-  return <button className={className} onClick={go} disabled={busy}><Eye size={18} /> {label}</button>;
+  return <button className={className} onClick={go} disabled={busy}>{label}</button>;
 }

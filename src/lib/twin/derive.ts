@@ -1,4 +1,4 @@
-import type { TwinResult, TruckTrace, TwinParams } from './sim';
+import type { TwinResult, TruckTrace, TwinParams, BatchTrace } from './sim';
 import { RESOURCE_LABEL } from './sim';
 import { STAGES, type PoiId, type StageId } from './pois';
 import { SCENARIOS } from './scenarios';
@@ -198,3 +198,43 @@ export const segmentsOf = (t: TruckTrace) => [
   { k: 'bay', a: t.fillEnd, b: t.bayEnd },
   { k: 'out', a: t.bayEnd, b: t.exit }
 ].filter((s) => Number.isFinite(s.a) && Number.isFinite(s.b) && s.b > s.a);
+
+/* ---------- статусы для таблиц ---------- */
+
+export type Tone = 'idle' | 'ok' | 'busy' | 'warn' | 'done';
+
+/** Статус автоцистерны в момент now */
+export function truckStatus(t: TruckTrace, now: number): { label: string; tone: Tone } {
+  if (now < t.arrive) return { label: 'Ожидается', tone: 'idle' };
+  if (now >= t.exit) return { label: 'Выехала', tone: 'done' };
+  if (!(now >= t.gateEnd)) return { label: 'КПП', tone: now >= t.gateStart ? 'busy' : 'warn' };
+  if (!(now >= t.tareEnd)) return { label: 'Весы', tone: 'busy' };
+  if (!(now >= t.qualityDone)) return { label: 'Входной контроль', tone: 'busy' };
+  if (!(now >= t.readyAt)) return { label: 'Нет места в резервуаре', tone: 'warn' };
+  if (!(now >= t.bayStart)) return { label: 'Ждёт пост слива', tone: 'warn' };
+  if (!(now >= t.fillStart)) return { label: 'Подключение', tone: 'busy' };
+  if (!(now >= t.fillEnd)) return { label: 'Слив', tone: 'ok' };
+  if (!(now >= t.bayEnd)) return { label: 'Отключение', tone: 'busy' };
+  return { label: 'Весы и документы', tone: 'busy' };
+}
+
+/** Статус партии в момент now */
+export function batchStatus(b: BatchTrace, now: number): { label: string; tone: Tone } {
+  if (now < b.planned) return { label: 'По плану', tone: 'idle' };
+  if (now >= b.done) return { label: 'На складе', tone: 'done' };
+  if (!(now >= b.feedStart)) return { label: b.starved > 0 && now > b.planned ? 'Ждёт смеситель или сырьё' : 'Ждёт смеситель', tone: 'warn' };
+  if (!(now >= b.feedEnd)) return { label: 'Подача A и B', tone: 'busy' };
+  if (!(now >= b.blendEnd)) return { label: 'Смешивание', tone: 'ok' };
+  if (!(now >= b.qcStart)) return { label: 'Ждёт лабораторию', tone: 'warn' };
+  if (!(now >= b.qcEnd)) return { label: 'Контроль качества', tone: 'busy' };
+  if (!(now >= b.lineStart)) return { label: 'Ждёт линию', tone: 'warn' };
+  if (!(now >= b.lineEnd)) return { label: 'Фасовка', tone: 'ok' };
+  return { label: 'Маркировка', tone: 'busy' };
+}
+
+/** События, произошедшие к моменту now (новые сверху) */
+export function recentEvents(r: TwinResult, now: number, n = 6) {
+  const out = [];
+  for (let i = r.events.length - 1; i >= 0 && out.length < n; i--) if (r.events[i].t <= now) out.push(r.events[i]);
+  return out;
+}
