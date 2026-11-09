@@ -7,7 +7,7 @@ export function Logo({ compact = false, light = false }: { compact?: boolean; li
       {!compact && (
         <span className="logo-text">
           <b>Северная</b>
-          <span style={light ? { color: 'rgba(255,255,255,.7)' } : undefined}>двойник участка масел</span>
+          <span style={light ? { color: 'rgba(255,255,255,.7)' } : undefined}>двойник отгрузки бензина</span>
         </span>
       )}
     </span>

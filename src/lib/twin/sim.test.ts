@@ -5,68 +5,57 @@ import { SCENARIOS } from './scenarios';
 import { signToken, verifyToken, hashPassword, verifyPassword } from '../server/crypto';
 
 test('модель детерминирована при одинаковом seed', () => {
-  const a = simulate({ seed: 7 });
-  const b = simulate({ seed: 7 });
-  assert.deepEqual(a.metrics, b.metrics);
+  assert.deepEqual(simulate({ seed: 7 }).metrics, simulate({ seed: 7 }).metrics);
 });
 
-test('цистерна сливается только после входного контроля и в порядке этапов', () => {
+test('уровень в резервуарах всегда от 0 до 100%', () => {
   for (const sc of SCENARIOS) {
     const r = simulate(sc.params);
-    for (const t of r.trucks.filter((x) => Number.isFinite(x.fillStart))) {
-      assert.ok(t.qualityDone <= t.fillStart, `${sc.id}: ${t.plate} слита до одобрения пробы`);
-      assert.ok(t.gateEnd <= t.tareStart && t.tareEnd <= t.bayStart && t.bayEnd <= t.grossStart && t.grossEnd <= t.exit);
-    }
+    for (const s of r.tankSeries) for (const v of s.lv) assert.ok(v >= -1e-9 && v <= 1 + 1e-9, `${sc.id}: ${v}`);
   }
 });
 
-test('уровень в резервуарах не выходит за пределы ёмкости', () => {
-  for (const seed of [1, 7, 42]) for (const sc of SCENARIOS) {
-    const r = simulate({ ...sc.params, seed });
-    for (const l of r.levelSeries) {
-      assert.ok(l.a >= -1e-9 && l.a <= 1 + 1e-9, `A=${l.a}`);
-      assert.ok(l.b >= -1e-9 && l.b <= 1 + 1e-9, `B=${l.b}`);
-    }
-  }
-});
-
-test('партия фасуется только после смешивания и контроля качества', () => {
+test('машина наливается только из открытого резервуара своей марки', () => {
   const r = simulate();
-  for (const b of r.batches.filter((x) => Number.isFinite(x.lineStart))) {
-    assert.ok(b.feedEnd <= b.blendStart && b.blendEnd <= b.qcStart && b.qcEnd <= b.lineStart && b.lineEnd <= b.done);
+  for (const t of r.trucks.filter((x) => Number.isFinite(x.bayStart))) {
+    assert.ok(t.tank >= 0);
+    assert.equal(r.tanks[t.tank].grade, t.component);
+    assert.ok(t.gateEnd <= t.bayStart);
+    if (Number.isFinite(t.exit)) assert.ok(t.fillStart <= t.fillEnd && t.bayEnd <= t.exit);
   }
 });
 
-test('на посту слива одновременно не больше одной цистерны', () => {
-  const r = simulate({ bays: 2, trucksPerHour: 3 });
-  const byBay = new Map<number, [number, number][]>();
-  for (const t of r.trucks) if (t.bay >= 0) byBay.set(t.bay, [...(byBay.get(t.bay) ?? []), [t.bayStart, t.bayEnd]]);
-  for (const list of byBay.values()) {
-    list.sort((a, b) => a[0] - b[0]);
-    for (let i = 1; i < list.length; i++) assert.ok(list[i][0] >= list[i - 1][1] - 1e-9);
+test('на посту одновременно не больше одной машины', () => {
+  const r = simulate({ days: 7 });
+  const by = new Map<number, [number, number][]>();
+  for (const t of r.trucks) if (t.bay >= 0) by.set(t.bay, [...(by.get(t.bay) ?? []), [t.bayStart, t.bayEnd]]);
+  for (const l of by.values()) { l.sort((a, b) => a[0] - b[0]); for (let i = 1; i < l.length; i++) assert.ok(l[i][0] >= l[i - 1][1] - 1e-9); }
+});
+
+test('отгружено не больше, чем произведено плюс стартовый запас', () => {
+  const r = simulate();
+  const start = r.tankSeries[0].lv.reduce((a, b) => a + b, 0) * r.params.tankT;
+  assert.ok(r.metrics.shippedT <= r.metrics.producedT + start + 1e-6);
+});
+
+test('нехватка машин приводит к затариванию и недовыпуску', () => {
+  const base = simulate();
+  const short = simulate({ supply: 0.85 });
+  assert.ok(short.metrics.blockedHours > base.metrics.blockedHours + 10);
+  assert.ok(short.metrics.lostT > 0 && short.metrics.planDone < base.metrics.planDone);
+});
+
+test('слоты 24/7 сокращают ожидание налива на нескольких seed', () => {
+  for (const seed of [1, 7, 42]) {
+    const a = simulate({ seed }), b = simulate({ seed, profile: 'slots' });
+    assert.ok(b.metrics.avgWait < a.metrics.avgWait * 0.6, `seed ${seed}`);
   }
 });
 
-test('загрузка ресурсов в пределах 0..100%', () => {
-  const r = simulate({ trucksPerHour: 4, batches: 14 });
-  for (const x of r.resources) assert.ok(x.utilization >= 0 && x.utilization <= 1, x.id);
-});
-
-test('комплексный сценарий: оборот короче, план и маржа не хуже — на нескольких seed', () => {
-  for (const seed of [1, 7, 42, 99]) {
-    const base = simulate({ ...SCENARIOS[0].params, seed });
-    const smart = simulate({ ...SCENARIOS[3].params, seed });
-    assert.ok(smart.metrics.avgTurnaround < base.metrics.avgTurnaround * 0.75, `seed ${seed}: оборот`);
-    assert.ok(smart.metrics.planDone >= base.metrics.planDone, `seed ${seed}: план`);
-    assert.ok(smart.metrics.margin > base.metrics.margin, `seed ${seed}: маржа`);
-  }
-});
-
-test('третий пост слива не увеличивает выпуск — узкое место в цехе', () => {
-  const base = simulate(SCENARIOS[0].params);
-  const bay = simulate(SCENARIOS[1].params);
-  assert.equal(bay.metrics.batchesDone, base.metrics.batchesDone);
-  assert.ok(bay.metrics.margin < base.metrics.margin);
+test('план месяца по умолчанию: 40 000 т АИ-92 и 30 000 т АИ-95', () => {
+  const r = simulate();
+  assert.equal(r.metrics.planT, 70000);
+  assert.ok(Math.abs(r.metrics.arrived - 3500) < 150);
 });
 
 test('токен сессии подписывается и отвергается при подделке', async () => {

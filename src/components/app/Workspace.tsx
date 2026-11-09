@@ -1,7 +1,7 @@
 'use client';
 
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
-import { Box, Braces, ChartColumn, Factory, LayoutDashboard, LogOut, ScrollText, Truck } from 'lucide-react';
+import { Box, Braces, CalendarRange, ChartColumn, Cylinder, LayoutDashboard, LogOut, ScrollText, Truck } from 'lucide-react';
 import { simulate, DEFAULT_PARAMS, type TwinParams, type TwinResult } from '@/lib/twin/sim';
 import { SCENARIOS, scenarioById } from '@/lib/twin/scenarios';
 import type { PoiId } from '@/lib/twin/pois';
@@ -13,23 +13,25 @@ import OverviewView from './OverviewView';
 import ReceivingView from './ReceivingView';
 import ProductionView from './ProductionView';
 import AnalyticsView from './AnalyticsView';
+import PlanView from './PlanView';
 import TourView from './TourView';
 import JournalView from './JournalView';
 import ApiView from './ApiView';
 import { report } from './report';
 import './app.css';
 
-export type Tab = 'overview' | 'receiving' | 'production' | 'analytics' | 'tour' | 'journal' | 'api';
+export type Tab = 'overview' | 'plan' | 'receiving' | 'production' | 'analytics' | 'tour' | 'journal' | 'api';
 export interface User { name: string; role: Role; email: string }
 
-const STORAGE_KEY = 'twin.workspace.v4';
+const STORAGE_KEY = 'twin.workspace.v5';
 
 interface Snapshot { tab: Tab; params: TwinParams; baselineId: string; time: number; savedAt: number }
 
 const PAGES: Record<Tab, { title: string }> = {
   overview: { title: 'Главная' },
-  receiving: { title: 'Приёмка' },
-  production: { title: 'Производство' },
+  plan: { title: 'План на месяц' },
+  receiving: { title: 'Налив' },
+  production: { title: 'Резервуары' },
   analytics: { title: 'Аналитика' },
   tour: { title: '3D-тур' },
   journal: { title: 'Журнал' },
@@ -53,10 +55,10 @@ export default function Workspace({ user }: { user: User }) {
   const [busy, setBusy] = useState(false);
 
   // часы симуляции: время в ref (для 3D на каждом кадре), в state — 4 раза в секунду для интерфейса
-  const clock = useRef({ t: 0, speed: 240 });
+  const clock = useRef({ t: 0, speed: 1440 });
   const [time, setTime] = useState(0);
   const [playing, setPlaying] = useState(true);
-  const [speed, setSpeedState] = useState(240);
+  const [speed, setSpeedState] = useState(1440);
 
   const result: TwinResult = useMemo(() => simulate(params), [params]);
   const baseline: TwinResult = useMemo(() => simulate(scenarioById(baselineId).params), [baselineId]);
@@ -142,8 +144,9 @@ export default function Workspace({ user }: { user: User }) {
 
   const main: { id: Tab; label: string; icon: React.ReactNode }[] = [
     { id: 'overview', label: 'Главная', icon: <LayoutDashboard size={18} /> },
-    { id: 'receiving', label: 'Приёмка', icon: <Truck size={18} /> },
-    { id: 'production', label: 'Производство', icon: <Factory size={18} /> },
+    { id: 'plan', label: 'План', icon: <CalendarRange size={18} /> },
+    { id: 'receiving', label: 'Налив', icon: <Truck size={18} /> },
+    { id: 'production', label: 'Резервуары', icon: <Cylinder size={18} /> },
     { id: 'analytics', label: 'Аналитика', icon: <ChartColumn size={18} /> },
     { id: 'tour', label: '3D-тур', icon: <Box size={18} /> }
   ];
@@ -192,12 +195,13 @@ export default function Workspace({ user }: { user: User }) {
                 {!preset && <option value="custom">Свой сценарий</option>}
               </select>
             </label>
-            <SimClock time={time} end={result.horizon} playing={playing} setPlaying={setPlaying} seek={seek} speed={speed} setSpeed={setSpeed} shiftEnd={result.params.shiftHours * 60} />
+            <SimClock time={time} end={result.horizon} playing={playing} setPlaying={setPlaying} seek={seek} speed={speed} setSpeed={setSpeed} />
           </div>
         </header>
 
         <main className={`page page-${tab}`}>
           {tab === 'overview' && <OverviewView result={result} baseline={baseline} time={time} clock={clock} openTour={openTour} go={setTab} />}
+          {tab === 'plan' && <PlanView result={result} apply={apply} busy={busy} canRun={canRun} time={time} />}
           {tab === 'receiving' && <ReceivingView result={result} time={time} />}
           {tab === 'production' && <ProductionView result={result} time={time} />}
           {tab === 'analytics' && <AnalyticsView result={result} baseline={baseline} baselineId={baselineId} setBaselineId={setBaselineId} apply={apply} busy={busy} canRun={canRun} time={time} />}

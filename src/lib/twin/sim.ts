@@ -1,190 +1,136 @@
 /**
- * Дискретно-событийная модель участка технических масел. Цепочка из ТЗ:
- *   автоцистерна → приём → резервуары → подача в цех → смешивание → контроль качества → фасовка → склад.
+ * Дискретно-событийная модель отгрузки бензина с НПЗ (по описанию представителя заказчика и ТЗ хакатона).
  *
- *  ВНЕШНИЙ процесс — «Приём автоцистерн»: КПП → весы (брутто) → входной контроль сырья → слив в резервуар
- *                    → весы (тара) → документы → выезд.
- *  ВНУТРЕННИЙ процесс — «Производство»: подача компонентов A и B в цех → смешивание → контроль качества партии
- *                    → фасовка в бочки → склад готовой продукции.
+ *  ВНУТРЕННИЙ процесс — «Приготовление и хранение»: установка непрерывно готовит АИ-92 и АИ-95 (класс 5)
+ *    по месячному плану → наполняет резервуар (~3000 м³) → анализ качества → резервуар открыт на налив.
+ *    Пока один резервуар отгружается, приготовление идёт в другой. Если все резервуары марки полны —
+ *    затаривание парка: установка вынуждена снижать выпуск (недовыпуск в тоннах).
+ *  ВНЕШНИЙ процесс — «Налив автоцистерн»: прибытие → КПП и документы → ожидание поста и продукта
+ *    → налив 20 т → выезд. Что с машиной дальше, заводу не важно.
  *
- * Процессы связаны через уровни в резервуарах (полный резервуар — цистерна ждёт, пустой — цех простаивает)
- * и через общие ресурсы: лабораторию и насосную. Модель детерминирована при одинаковом seed.
+ * Горизонт — месяц. Модель детерминирована при одинаковом seed.
  */
 
-export type PrepMode = 'on-arrival' | 'prebooked';
+export type ArrivalProfile = 'uneven' | 'slots';
+export const GRADES = ['АИ-92 К5', 'АИ-95 К5'] as const;
+export type Grade = 0 | 1;
 
 export interface TwinParams {
-  shiftHours: number;
-  trucksPerHour: number; // прибытие автоцистерн с сырьём
-  gates: number;
-  scales: number;
-  bays: number; // постов слива
-  pumpRate: number; // м³/ч слива на одном посту
-  truckVolume: number; // м³ сырья в цистерне
-  docCheckMin: number;
-  labMin: number; // контроль качества партии, мин
-  inLabMin: number; // входной контроль пробы сырья, мин
-  batchEvery: number; // (резерв) совместимость API
-  prepMode: PrepMode; // предзапись: документы и сертификат поставки до приезда
-  automation: boolean; // автоматизация приёма: автоподключение, расходомер, поточный анализатор, ЭТрН
-  dispatchers: number;
-  tankCapacity: number; // м³ на компонент (два резервуара)
-  initialLevel: number; // начальный уровень, доля
-  batches: number; // плановых партий за смену
-  batchM3: number; // объём партии смеси, м³
-  shareA: number; // доля компонента A в рецептуре
-  blendMin: number; // время смешивания
-  blenders: number;
-  lines: number; // линий фасовки
-  fillRate: number; // м³/ч на линию фасовки
-  canisterL: number; // объём тары (бочка), л
-  dedicatedPump: boolean; // отдельный насос подачи в цех
-  costIdleHour: number;
-  costBayShift: number;
-  marginM3: number; // маржа на м³ готовой продукции, ₽
+  days: number; // горизонт плана, суток
+  crudeT: number; // нефть в переработку за месяц, т
+  plan92: number; // план АИ-92 за месяц, т
+  plan95: number; // план АИ-95 за месяц, т
+  tanks92: number; // резервуаров под АИ-92
+  tanks95: number; // резервуаров под АИ-95
+  tankT: number; // вместимость резервуара, т (≈ 3000 м³)
+  qcHours: number; // анализ качества резервуара, ч
+  supply: number; // подъезд машин от потребности, доля (1 = ровно столько, сколько нужно)
+  profile: ArrivalProfile; // неравномерный подъезд или слоты 24/7
+  posts: number; // постов налива
+  truckT: number; // тонн в автоцистерне
+  loadRate: number; // скорость налива на посту, т/ч
+  idleRate: number; // плата перевозчику за час простоя машины, ₽
   seed: number;
 }
 
 export const DEFAULT_PARAMS: TwinParams = {
-  shiftHours: 8,
-  trucksPerHour: 1.25,
-  gates: 1,
-  scales: 1,
-  bays: 2,
-  pumpRate: 50,
-  truckVolume: 20,
-  docCheckMin: 6,
-  labMin: 25,
-  inLabMin: 14,
-  batchEvery: 6,
-  prepMode: 'on-arrival',
-  automation: false,
-  dispatchers: 1,
-  tankCapacity: 110,
-  initialLevel: 0.5,
-  batches: 8,
-  batchM3: 18,
-  shareA: 0.6,
-  blendMin: 30,
-  blenders: 1,
-  lines: 1,
-  fillRate: 24,
-  canisterL: 216,
-  dedicatedPump: false,
-  costIdleHour: 2400,
-  costBayShift: 12000,
-  marginM3: 6000,
+  days: 30,
+  crudeT: 100000,
+  plan92: 40000,
+  plan95: 30000,
+  tanks92: 3,
+  tanks95: 3,
+  tankT: 2200,
+  qcHours: 3,
+  supply: 1,
+  profile: 'uneven',
+  posts: 3,
+  truckT: 20,
+  loadRate: 100,
+  idleRate: 1500,
   seed: 42
 };
 
-export type ResourceId = 'gate' | 'scales' | 'bays' | 'dispatcher' | 'lab' | 'operator' | 'blender' | 'line';
+export type ResourceId = 'gate' | 'posts';
+export const RESOURCE_LABEL: Record<ResourceId, string> = { gate: 'КПП', posts: 'Посты налива' };
 
-export const RESOURCE_LABEL: Record<ResourceId, string> = {
-  gate: 'КПП',
-  scales: 'Автовесы',
-  bays: 'Посты слива',
-  dispatcher: 'Диспетчер',
-  lab: 'Лаборатория',
-  operator: 'Насосная',
-  blender: 'Смеситель',
-  line: 'Линия фасовки'
-};
+export type TankState = 'fill' | 'qc' | 'ship' | 'empty';
+export const TANK_STATE_LABEL: Record<TankState, string> = { fill: 'Наполнение', qc: 'Анализ', ship: 'На наливе', empty: 'Свободен' };
+
+export interface TankInfo { id: number; grade: Grade; name: string }
 
 export interface TruckTrace {
   id: number;
   plate: string;
-  component: 0 | 1; // 0 — A, 1 — B
-  volume: number;
+  component: Grade; // марка бензина
+  volume: number; // т
   arrive: number;
   gateStart: number;
   gateEnd: number;
-  tareStart: number; // первое взвешивание (брутто)
+  tareStart: number;
   tareEnd: number;
-  prepStart: number; // начало входного контроля
-  orderDone: number; // документы приняты
-  qualityDone: number; // проба сырья одобрена
-  readyAt: number; // допущена к сливу (проба + место в резервуаре)
+  prepStart: number;
+  orderDone: number;
+  qualityDone: number;
+  readyAt: number;
   bay: number;
   bayStart: number;
-  fillStart: number; // начало слива
+  fillStart: number;
   fillEnd: number;
   bayEnd: number;
-  grossStart: number; // второе взвешивание (тара)
+  grossStart: number;
   grossEnd: number;
   exit: number;
-  tankWait: number; // ожидание свободного места в резервуаре, мин
-}
-
-export interface BatchTrace {
-  id: number;
-  product: number; // рецептура 0..3
-  m3: number;
-  units: number; // бочек
-  planned: number;
-  feedStart: number;
-  feedEnd: number;
-  starved: number; // ожидание компонентов, мин
-  blendStart: number;
-  blendEnd: number;
-  qcStart: number;
-  qcEnd: number;
-  line: number;
-  lineStart: number;
-  lineEnd: number;
-  done: number;
+  tankWait: number; // ожидание из-за отсутствия продукта, мин
+  tank: number;
 }
 
 export interface TwinEvent {
   t: number;
-  kind: 'arrive' | 'gate' | 'lab' | 'prep' | 'bay' | 'fill' | 'seal' | 'exit' | 'alert' | 'bottle';
+  kind: 'arrive' | 'gate' | 'bay' | 'fill' | 'exit' | 'alert' | 'tank';
   process: 'internal' | 'external';
   truck?: number;
   text: string;
 }
 
-export interface ResourceStat {
-  id: ResourceId;
-  label: string;
-  capacity: number;
-  utilization: number;
-  avgWait: number;
-  maxQueue: number;
-}
+export interface ResourceStat { id: ResourceId; label: string; capacity: number; utilization: number; avgWait: number; maxQueue: number }
+
+export interface DayStat { day: number; plan: number; produced: number; shipped: number; trucks: number; blockedH: number; maxQueue: number }
 
 export interface TwinResult {
   params: TwinParams;
   horizon: number;
   trucks: TruckTrace[];
-  batches: BatchTrace[];
+  tanks: TankInfo[];
+  tankSeries: { t: number; lv: number[]; st: TankState[] }[];
+  blocks: { grade: Grade; from: number; to: number }[];
   events: TwinEvent[];
   resources: ResourceStat[];
   queueSeries: { t: number; onSite: number; waitingBay: number }[];
-  levelSeries: { t: number; a: number; b: number }[]; // доли заполнения резервуаров
+  daily: DayStat[];
   metrics: {
-    served: number;
     arrived: number;
-    volume: number; // принято сырья, м³
-    avgTurnaround: number;
-    p90Turnaround: number;
-    avgWait: number;
+    served: number;
+    avgWait: number; // ожидание налива, мин
+    p90Wait: number;
     maxQueue: number;
-    idleCost: number;
-    opCost: number;
-    totalCost: number;
-    costPerM3: number; // на м³ готовой продукции
-    bottleneck: ResourceId;
-    bottledUnits: number;
-    bottledM3: number;
-    batchesDone: number;
-    batchDelay: number; // среднее время партии от плана до склада
-    starvedMin: number; // простой цеха из-за нехватки компонентов
-    tankFullWait: number; // суммарное ожидание цистерн из-за полного резервуара
-    margin: number; // маржа смены: выпуск × маржа − затраты
-    planDone: number; // выполнение плана выпуска, доля
+    idleHours: number; // простой машин, машино-ч
+    idleCost: number; // плата за простой, ₽
+    planT: number;
+    producedT: number;
+    shippedT: number;
+    planDone: number; // произведено от плана
+    shippedShare: number; // отгружено от произведённого
+    blockedHours: number; // затаривание (сумма по маркам), ч
+    lostT: number; // недовыпуск из-за затаривания, т
+    minFree: number; // минимальная свободная ёмкость парка, доля
+    postUtil: number;
+    bottleneck: 'posts' | 'tanks' | 'trucks' | 'none';
+    // совместимость со старыми экранами
+    avgTurnaround: number;
+    volume: number;
   };
 }
-
-export const RECIPES = ['И-20А', 'И-40А', 'ИГП-30', 'И-50А'];
 
 /* ---------- инфраструктура ---------- */
 
@@ -308,9 +254,21 @@ function plate(r: Rng) {
 }
 
 export const fmtClock = (min: number) => {
-  const t = Math.max(0, Math.round(min)) + 8 * 60;
+  const t = Math.max(0, Math.round(min));
   return `${String(Math.floor(t / 60) % 24).padStart(2, '0')}:${String(t % 60).padStart(2, '0')}`;
 };
+/** «д.3 14:20» — день плана и время */
+export const fmtDayTime = (min: number) => `д.${Math.floor(Math.max(0, min) / 1440) + 1} ${fmtClock(min)}`;
+
+/** Интенсивность подъезда в момент t (множитель к среднему): днём больше, ночью и в выходные меньше */
+function arrivalFactor(t: number, profile: ArrivalProfile) {
+  if (profile === 'slots') return 1;
+  const h = (t / 60) % 24;
+  const dow = Math.floor(t / 1440) % 7; // 0 — понедельник
+  const day = h >= 7 && h < 21 ? 1.45 : 0.42;
+  const week = dow >= 5 ? 0.55 : 1.14;
+  return day * week;
+}
 
 /* ---------- модель ---------- */
 
@@ -318,296 +276,240 @@ export function simulate(input: Partial<TwinParams> = {}): TwinResult {
   const p: TwinParams = { ...DEFAULT_PARAMS, ...input };
   const rnd = mulberry32(p.seed);
   const q = new EventQueue();
-  const R = {
-    gate: new Resource(q, p.gates),
-    scales: new Resource(q, p.scales),
-    bays: new Resource(q, p.bays),
-    dispatcher: new Resource(q, p.dispatchers),
-    lab: new Resource(q, 1),
-    operator: new Resource(q, 1),
-    blender: new Resource(q, p.blenders),
-    line: new Resource(q, p.lines)
-  };
-  const feedPump = p.dedicatedPump ? new Resource(q, 1) : R.operator;
-  const shiftEnd = p.shiftHours * 60;
-  const limit = shiftEnd + 240;
-  const auto = p.automation;
-  const pre = p.prepMode === 'prebooked';
-  const trucks: TruckTrace[] = [];
-  const batches: BatchTrace[] = [];
+  const horizon = p.days * 1440;
   const events: TwinEvent[] = [];
   const log = (e: Omit<TwinEvent, 't'>) => events.push({ t: q.now, ...e });
-  const CN = ['A', 'B'];
+  const gate = new Resource(q, 2);
 
-  /* ----- резервуары: уровень и резерв места под сливающиеся цистерны ----- */
-  const level = [p.tankCapacity * p.initialLevel, p.tankCapacity * p.initialLevel];
-  const reserved = [0, 0];
-  const levelSeries: TwinResult['levelSeries'] = [];
-  const snap = () => levelSeries.push({ t: q.now, a: level[0] / p.tankCapacity, b: level[1] / p.tankCapacity });
-  const spaceWaiters: { c: number; v: number; since: number; go: () => void; t: TruckTrace }[] = [];
-  const stockWaiters: { need: [number, number]; since: number; go: () => void; b: BatchTrace }[] = [];
-  const pump = () => {
-    // цистерны, которым освободилось место
-    for (let i = 0; i < spaceWaiters.length; ) {
-      const w = spaceWaiters[i];
-      if (level[w.c] + reserved[w.c] + w.v <= p.tankCapacity) {
-        reserved[w.c] += w.v;
-        w.t.tankWait = q.now - w.since;
-        spaceWaiters.splice(i, 1);
-        w.go();
-      } else i++;
+  /* ----- резервуары ----- */
+  const rate: [number, number] = [p.plan92 / (p.days * 1440), p.plan95 / (p.days * 1440)]; // т/мин
+  const counts: [number, number] = [p.tanks92, p.tanks95];
+  const tanks: TankInfo[] = [];
+  const lv: number[] = [];
+  const st: TankState[] = [];
+  const reserved: number[] = [];
+  const fillSince: number[] = [];
+  const openedAt: number[] = [];
+  ([0, 1] as Grade[]).forEach((g) => {
+    for (let k = 0; k < counts[g]; k++) {
+      const id = tanks.length;
+      tanks.push({ id, grade: g, name: `${g === 0 ? '92' : '95'}-${k + 1}` });
+      // стартовое состояние: первый на наливе, второй наполняется, остальные свободны
+      // стартовое состояние: на наливе 1–2 резервуара с запасом, один наполняется, остальные свободны
+      const last = counts[g] - 1;
+      const role = k === last ? 'fill' : k < Math.min(2, last) ? 'ship' : 'empty';
+      lv.push(role === 'ship' ? p.tankT * (k === 0 ? 0.5 : 0.95) : role === 'fill' ? p.tankT * 0.2 : 0);
+      st.push(role);
+      reserved.push(0);
+      fillSince.push(0);
+      openedAt.push(role === 'ship' ? k - 2 : Infinity);
     }
-    // партии, которым хватает компонентов
-    for (let i = 0; i < stockWaiters.length; ) {
-      const w = stockWaiters[i];
-      if (level[0] >= w.need[0] && level[1] >= w.need[1]) {
-        level[0] -= w.need[0];
-        level[1] -= w.need[1];
-        w.b.starved = q.now - w.since;
-        stockWaiters.splice(i, 1);
-        snap();
-        w.go();
-        pump();
-        return;
-      } else i++;
+  });
+  const filling: (number | null)[] = [0, 1].map((g) => tanks.findIndex((t) => t.grade === g && st[t.id] === 'fill')).map((i) => (i >= 0 ? i : null));
+  const blockedSince: (number | null)[] = [null, null];
+  const blocks: TwinResult['blocks'] = [];
+  const produced = [0, 0];
+  let lostT = 0;
+  const fullEventToken = [0, 0];
+
+  const levelNow = (i: number) => (st[i] === 'fill' ? Math.min(p.tankT, lv[i] + rate[tanks[i].grade] * (q.now - fillSince[i])) : lv[i]);
+
+  const startFilling = (g: Grade, i: number) => {
+    st[i] = 'fill';
+    fillSince[i] = q.now;
+    filling[g] = i;
+    const token = ++fullEventToken[g];
+    const dt = (p.tankT - lv[i]) / Math.max(1e-9, rate[g]);
+    q.after(dt, () => { if (token === fullEventToken[g]) onFull(g, i); });
+  };
+  const onFull = (g: Grade, i: number) => {
+    produced[g] += p.tankT - lv[i];
+    lv[i] = p.tankT;
+    st[i] = 'qc';
+    filling[g] = null;
+    log({ kind: 'tank', process: 'internal', text: `Резервуар ${tanks[i].name} наполнен — отбор пробы на анализ` });
+    q.after(p.qcHours * 60 * tri(rnd, 0.85, 1, 1.25), () => {
+      st[i] = 'ship';
+      openedAt[i] = q.now;
+      log({ kind: 'tank', process: 'internal', text: `Резервуар ${tanks[i].name}: анализ пройден, открыт на налив` });
+      dispatch();
+    });
+    const next = tanks.find((t) => t.grade === g && st[t.id] === 'empty');
+    if (next) startFilling(g, next.id);
+    else {
+      blockedSince[g] = q.now;
+      log({ kind: 'alert', process: 'internal', text: `Затаривание: все резервуары ${GRADES[g]} заполнены — установка снижает выпуск` });
     }
   };
-  const reserveSpace = (t: TruckTrace, go: () => void) => {
-    const c = t.component;
-    if (level[c] + reserved[c] + t.volume <= p.tankCapacity && !spaceWaiters.some((w) => w.c === c)) {
-      reserved[c] += t.volume;
-      t.tankWait = 0;
-      go();
-    } else {
-      log({ kind: 'alert', process: 'external', truck: t.id, text: `${t.plate}: резервуар ${CN[c]} заполнен — ждёт освобождения места` });
-      spaceWaiters.push({ c, v: t.volume, since: q.now, go, t });
+  const onEmpty = (i: number) => {
+    const g = tanks[i].grade;
+    st[i] = 'empty';
+    openedAt[i] = Infinity;
+    if (blockedSince[g] != null) {
+      const from = blockedSince[g]!;
+      blocks.push({ grade: g, from, to: q.now });
+      lostT += rate[g] * (q.now - from);
+      blockedSince[g] = null;
+      log({ kind: 'tank', process: 'internal', text: `Резервуар ${tanks[i].name} освободился — выпуск ${GRADES[g]} восстановлен` });
+      startFilling(g, i);
     }
   };
-  const takeStock = (b: BatchTrace, go: () => void) => {
-    const need: [number, number] = [b.m3 * p.shareA, b.m3 * (1 - p.shareA)];
-    if (!stockWaiters.length && level[0] >= need[0] && level[1] >= need[1]) {
-      level[0] -= need[0];
-      level[1] -= need[1];
-      b.starved = 0;
-      snap();
-      go();
-      pump();
-    } else {
-      log({ kind: 'alert', process: 'internal', text: `Партия №${b.id}: не хватает компонентов в резервуарах — цех ждёт сырьё` });
-      stockWaiters.push({ need, since: q.now, go, b });
+  const shipTank = (g: Grade) => {
+    let best = -1;
+    for (const t of tanks) if (t.grade === g && st[t.id] === 'ship' && lv[t.id] - reserved[t.id] >= p.truckT && (best < 0 || openedAt[t.id] < openedAt[best])) best = t.id;
+    return best;
+  };
+
+  /* ----- посты налива и очередь ----- */
+  const freePosts: number[] = Array.from({ length: p.posts }, (_, i) => i);
+  let postBusy = 0, postBusyTime = 0, postLast = 0;
+  const accountPosts = () => { postBusyTime += postBusy * (q.now - postLast); postLast = q.now; };
+  const waiting: TruckTrace[] = [];
+  let maxQueue = 0;
+  let waitSum = 0, waitN = 0;
+
+  const dispatch = () => {
+    for (let k = 0; k < waiting.length && freePosts.length; ) {
+      const t = waiting[k];
+      const tk = shipTank(t.component);
+      if (tk < 0) { k++; continue; }
+      waiting.splice(k, 1);
+      const post = freePosts.shift()!;
+      accountPosts();
+      postBusy++;
+      reserved[tk] += p.truckT;
+      t.readyAt = q.now;
+      t.bay = post;
+      t.tank = tk;
+      t.bayStart = q.now;
+      waitSum += q.now - t.gateEnd;
+      waitN++;
+      q.after(tri(rnd, 3, 5, 8), () => {
+        t.fillStart = q.now;
+        q.after((p.truckT / p.loadRate) * 60 * tri(rnd, 0.95, 1, 1.1), () => {
+          t.fillEnd = q.now;
+          lv[tk] -= p.truckT;
+          reserved[tk] -= p.truckT;
+          q.after(tri(rnd, 2, 4, 6), () => {
+            t.bayEnd = q.now;
+            t.grossStart = t.grossEnd = q.now;
+            accountPosts();
+            postBusy--;
+            freePosts.push(post);
+            freePosts.sort((a, b) => a - b);
+            q.after(tri(rnd, 2, 3, 5), () => { t.exit = q.now; });
+            if (lv[tk] - reserved[tk] < p.truckT && reserved[tk] === 0) onEmpty(tk);
+            dispatch();
+          });
+        });
+      });
     }
   };
 
-  /* ----- ВНЕШНИЙ процесс: приём автоцистерны ----- */
   const truckFlow = (t: TruckTrace) => {
-    log({ kind: 'arrive', process: 'external', truck: t.id, text: `${t.plate} с компонентом ${CN[t.component]} (${t.volume} м³) прибыла на КПП` });
-    R.gate.request((g) => {
+    gate.request((gi) => {
       t.gateStart = q.now;
-      const base = p.docCheckMin * (pre ? 0.45 : 1) * (auto ? 0.8 : 1);
-      q.after(tri(rnd, base * 0.6, base, base * 1.7), () => {
-        R.gate.release(g);
-        t.gateEnd = q.now;
-        R.scales.request((s) => {
-          t.tareStart = q.now;
-          q.after(tri(rnd, 2, 3, 5), () => {
-            R.scales.release(s);
-            t.tareEnd = q.now;
-            // входной контроль: документы у диспетчера и проба сырья в лаборатории
-            t.prepStart = q.now;
-            const docs = (done: () => void) => {
-              if (pre) { t.orderDone = q.now; return done(); }
-              R.dispatcher.request((d) => q.after(auto ? tri(rnd, 1, 2, 3) : tri(rnd, 4, 6, 10), () => { R.dispatcher.release(d); t.orderDone = q.now; done(); }));
-            };
-            docs(() => {
-              R.lab.request((l) => {
-                const lm = auto ? p.inLabMin * 0.35 : pre ? p.inLabMin * 0.7 : p.inLabMin;
-                q.after(tri(rnd, lm * 0.7, lm, lm * 1.4), () => {
-                  R.lab.release(l);
-                  t.qualityDone = q.now;
-                  log({ kind: 'lab', process: 'external', truck: t.id, text: `${t.plate}: проба сырья ${CN[t.component]} соответствует` });
-                  reserveSpace(t, () => {
-                    t.readyAt = q.now;
-                    R.bays.request((b) => {
-                      t.bay = b;
-                      t.bayStart = q.now;
-                      log({ kind: 'bay', process: 'external', truck: t.id, text: `${t.plate} на посту слива №${b + 1}: заземление, подключение` });
-                      q.after(auto ? tri(rnd, 2.5, 3, 4.5) : tri(rnd, 6, 8, 12), () => {
-                        // оператор насосной открывает маршрут в резервуар
-                        R.operator.request((o) => q.after(auto ? tri(rnd, 1, 1.5, 2.5) : tri(rnd, 3, 5, 8), () => {
-                          R.operator.release(o);
-                          t.fillStart = q.now;
-                          q.after((t.volume / p.pumpRate) * 60 * tri(rnd, 0.95, 1, 1.12), () => {
-                            t.fillEnd = q.now;
-                            reserved[t.component] -= t.volume;
-                            level[t.component] += t.volume;
-                            snap();
-                            log({ kind: 'fill', process: 'external', truck: t.id, text: `${t.plate}: слито ${t.volume} м³ в резервуар ${CN[t.component]}` });
-                            pump();
-                            q.after(auto ? tri(rnd, 2, 2.5, 4) : tri(rnd, 4, 6, 9), () => {
-                              R.bays.release(b);
-                              t.bayEnd = q.now;
-                              R.scales.request((s2) => {
-                                t.grossStart = q.now;
-                                q.after(tri(rnd, 2, 3, 5), () => {
-                                  R.scales.release(s2);
-                                  t.grossEnd = q.now;
-                                  R.dispatcher.request((d) => q.after(auto ? tri(rnd, 0.5, 1, 2) : tri(rnd, 3, 5, 8), () => {
-                                    R.dispatcher.release(d);
-                                    t.exit = q.now;
-                                    const turn = t.exit - t.arrive;
-                                    log({ kind: 'exit', process: 'external', truck: t.id, text: `${t.plate} выехала, оборот ${Math.round(turn)} мин` });
-                                    if (turn > 150) log({ kind: 'alert', process: 'external', truck: t.id, text: `Долгий оборот ${t.plate}: ${Math.round(turn)} мин` });
-                                  }));
-                                });
-                              });
-                            });
-                          });
-                        }));
-                      });
-                    });
-                  });
-                });
-              });
-            });
-          });
-        });
+      q.after(tri(rnd, 3, 5, 9), () => {
+        gate.release(gi);
+        t.gateEnd = t.tareStart = t.tareEnd = t.prepStart = t.orderDone = t.qualityDone = q.now;
+        waiting.push(t);
+        maxQueue = Math.max(maxQueue, waiting.length);
+        dispatch();
+        if (shipTank(t.component) < 0) t.tankWait = -q.now; // пометка: продукта не было при постановке в очередь
       });
     });
   };
 
-  /* ----- ВНУТРЕННИЙ процесс: производство партии ----- */
-  const batchFlow = (b: BatchTrace) => {
-    const name = RECIPES[b.product];
-    log({ kind: 'bottle', process: 'internal', text: `Партия №${b.id} (${name}, ${b.m3} м³): заявка на подачу компонентов` });
-    R.blender.request((bl) => {
-      takeStock(b, () => {
-        b.feedStart = q.now;
-        feedPump.request((o) => {
-          q.after(auto ? tri(rnd, 3, 4, 6) : tri(rnd, 7, 10, 15), () => {
-            feedPump.release(o);
-            b.feedEnd = q.now;
-            b.blendStart = q.now;
-            q.after(tri(rnd, p.blendMin * 0.85, p.blendMin, p.blendMin * 1.25), () => {
-              b.blendEnd = q.now;
-              // партия остаётся в смесителе до заключения лаборатории
-              R.lab.request((l) => {
-                b.qcStart = q.now;
-                q.after(tri(rnd, p.labMin * 0.7, p.labMin, p.labMin * 1.4), () => {
-                  R.lab.release(l);
-                  b.qcEnd = q.now;
-                  log({ kind: 'bottle', process: 'internal', text: `Партия №${b.id}: контроль качества пройден, паспорт выдан` });
-                  R.line.request((ln) => {
-                    R.blender.release(bl);
-                    b.line = ln;
-                    b.lineStart = q.now;
-                    q.after((b.m3 / p.fillRate) * 60 * tri(rnd, 0.97, 1, 1.1), () => {
-                      R.line.release(ln);
-                      b.lineEnd = q.now;
-                      q.after(tri(rnd, 5, 8, 12), () => {
-                        b.done = q.now;
-                        log({ kind: 'bottle', process: 'internal', text: `Партия №${b.id}: ${b.units} бочек на складе` });
-                      });
-                    });
-                  });
-                });
-              });
-            });
-          });
-        });
-      });
-    });
-  };
-
-  // прибытия автоцистерн
-  let tArr = expo(rnd, 60 / p.trucksPerHour) * 0.5;
-  let id = 1;
-  while (tArr < shiftEnd) {
-    const vol = Math.round(tri(rnd, p.truckVolume * 0.75, p.truckVolume, p.truckVolume * 1.1));
+  /* ----- подъезд машин (поток с переменной интенсивностью, метод прореживания) ----- */
+  const trucks: TruckTrace[] = [];
+  const share92 = p.plan92 / Math.max(1, p.plan92 + p.plan95);
+  const perMin = (((p.plan92 + p.plan95) / p.truckT) * p.supply) / (p.days * 1440);
+  const fmax = p.profile === 'slots' ? 1 : 1.45 * 1.14;
+  let tArr = 0, id = 1;
+  const mkTruck = (at: number) => {
     const t: TruckTrace = {
-      id: id++, plate: plate(rnd), component: rnd() < p.shareA ? 0 : 1, volume: vol, arrive: tArr,
+      id: id++, plate: plate(rnd), component: rnd() < share92 ? 0 : 1, volume: p.truckT, arrive: at,
       gateStart: NaN, gateEnd: NaN, tareStart: NaN, tareEnd: NaN, prepStart: NaN, orderDone: NaN, qualityDone: NaN, readyAt: NaN,
-      bay: -1, bayStart: NaN, fillStart: NaN, fillEnd: NaN, bayEnd: NaN, grossStart: NaN, grossEnd: NaN, exit: NaN, tankWait: 0
+      bay: -1, bayStart: NaN, fillStart: NaN, fillEnd: NaN, bayEnd: NaN, grossStart: NaN, grossEnd: NaN, exit: NaN, tankWait: 0, tank: -1
     };
     trucks.push(t);
-    q.at(tArr, () => truckFlow(t));
-    tArr += expo(rnd, 60 / p.trucksPerHour);
-  }
-  // план производства
-  const step = (shiftEnd - 60) / Math.max(1, p.batches);
-  for (let k = 0; k < p.batches; k++) {
-    const m3 = Math.round(p.batchM3 * tri(rnd, 0.9, 1, 1.08) * 10) / 10;
-    const b: BatchTrace = {
-      id: k + 1, product: k % 4, m3, units: Math.round((m3 * 1000) / p.canisterL), planned: 5 + k * step,
-      feedStart: NaN, feedEnd: NaN, starved: 0, blendStart: NaN, blendEnd: NaN, qcStart: NaN, qcEnd: NaN,
-      line: -1, lineStart: NaN, lineEnd: NaN, done: NaN
-    };
-    batches.push(b);
-    q.at(b.planned, () => batchFlow(b));
-  }
-
-  const queueSeries: TwinResult['queueSeries'] = [];
-  const sample = () => {
-    const now = q.now;
-    let onSite = 0, waitingBay = 0;
-    for (const t of trucks) {
-      if (t.arrive <= now && !(t.exit <= now)) onSite++;
-      if (t.tareEnd <= now && !(t.bayStart <= now)) waitingBay++;
-    }
-    queueSeries.push({ t: now, onSite, waitingBay });
-    snap();
-    if (now + 10 <= limit) q.after(10, sample);
+    q.at(at, () => truckFlow(t));
   };
-  q.at(0, sample);
-  q.run(limit);
+  if (perMin > 0) {
+    if (p.profile === 'slots') {
+      const step = 1 / perMin;
+      for (tArr = step * rnd(); tArr < horizon; tArr += step) mkTruck(Math.max(0, tArr + (rnd() - 0.5) * step * 0.6));
+    } else {
+      for (;;) {
+        tArr += expo(rnd, 1 / (perMin * fmax));
+        if (tArr >= horizon) break;
+        if (rnd() < arrivalFactor(tArr, p.profile) / fmax) mkTruck(tArr);
+      }
+    }
+  }
 
-  const done = trucks.filter((t) => Number.isFinite(t.exit));
-  const horizon = Math.max(shiftEnd, ...done.map((t) => t.exit), ...batches.filter((b) => Number.isFinite(b.done)).map((b) => Math.min(b.done, limit)));
-  const resources: ResourceStat[] = (Object.keys(R) as ResourceId[]).map((k) => {
-    const r = R[k];
-    r.finish(horizon);
-    return { id: k, label: RESOURCE_LABEL[k], capacity: r.capacity, utilization: Math.min(1, r.busyTime / (horizon * r.capacity)), avgWait: r.waitCount ? r.waitSum / r.waitCount : 0, maxQueue: r.maxQueue };
+  /* ----- срезы для графиков и 3D ----- */
+  const tankSeries: TwinResult['tankSeries'] = [];
+  const queueSeries: TwinResult['queueSeries'] = [];
+  const snap = () => {
+    tankSeries.push({ t: q.now, lv: tanks.map((t) => levelNow(t.id) / p.tankT), st: st.slice() });
+    let onSite = 0;
+    for (const t of trucks) if (t.arrive <= q.now && !(t.exit <= q.now)) onSite++;
+    queueSeries.push({ t: q.now, onSite, waitingBay: waiting.length });
+    if (q.now + 30 <= horizon) q.after(30, snap);
+  };
+  ([0, 1] as Grade[]).forEach((g) => { if (filling[g] != null) startFilling(g, filling[g]!); });
+  q.at(0, snap);
+  q.run(horizon);
+  // закрываем открытые интервалы
+  ([0, 1] as Grade[]).forEach((g) => {
+    if (blockedSince[g] != null) { blocks.push({ grade: g, from: blockedSince[g]!, to: horizon }); lostT += rate[g] * (horizon - blockedSince[g]!); }
+    if (filling[g] != null) produced[g] += levelNow(filling[g]!) - lv[filling[g]!];
+  });
+  accountPosts();
+  gate.finish(horizon);
+
+  // ожидание из-за отсутствия продукта
+  for (const t of trucks) if (t.tankWait < 0) t.tankWait = Number.isFinite(t.bayStart) ? t.bayStart + t.tankWait : horizon + t.tankWait;
+
+  const served = trucks.filter((t) => Number.isFinite(t.fillEnd));
+  const waits = trucks.filter((t) => Number.isFinite(t.bayStart)).map((t) => t.bayStart - t.gateEnd).sort((a, b) => a - b);
+  const stuck = trucks.filter((t) => Number.isFinite(t.gateEnd) && !Number.isFinite(t.bayStart)).map((t) => horizon - t.gateEnd);
+  const idleMin = waits.reduce((s, w) => s + w, 0) + stuck.reduce((s, w) => s + w, 0);
+  const shippedT = served.length * p.truckT;
+  const producedT = produced[0] + produced[1];
+  const planT = p.plan92 + p.plan95;
+  const blockedHours = blocks.reduce((s, b) => s + (b.to - b.from), 0) / 60;
+  const capacity = tanks.length * p.tankT;
+  const minFree = tankSeries.length ? Math.min(...tankSeries.map((x) => 1 - x.lv.reduce((a, b) => a + b, 0) / Math.max(1, tanks.length))) : 1;
+  const postUtil = postBusyTime / (horizon * Math.max(1, p.posts));
+  const avgWait = waits.length ? waits.reduce((a, b) => a + b, 0) / waits.length : 0;
+  void capacity;
+
+  const daily: DayStat[] = Array.from({ length: p.days }, (_, d) => {
+    const a = d * 1440, b = a + 1440;
+    const dayTrucks = served.filter((t) => t.fillEnd >= a && t.fillEnd < b);
+    const blk = blocks.reduce((s, x) => s + Math.max(0, Math.min(b, x.to) - Math.max(a, x.from)), 0) / 60;
+    const mq = Math.max(0, ...queueSeries.filter((x) => x.t >= a && x.t < b).map((x) => x.waitingBay));
+    return { day: d + 1, plan: planT / p.days, produced: ((rate[0] + rate[1]) * 1440) - blk * 60 * ((rate[0] + rate[1]) / 2), shipped: dayTrucks.length * p.truckT, trucks: dayTrucks.length, blockedH: blk, maxQueue: mq };
   });
 
-  const avg = (a: number[]) => (a.length ? a.reduce((s, v) => s + v, 0) / a.length : 0);
-  const turns = done.map((t) => t.exit - t.arrive).sort((a, b) => a - b);
-  const pureService = (t: TruckTrace) => (t.gateEnd - t.gateStart) + (t.tareEnd - t.tareStart) + (t.bayEnd - t.bayStart) + (t.grossEnd - t.grossStart);
-  const waits = done.map((t) => t.exit - t.arrive - pureService(t));
-  const volume = trucks.filter((t) => Number.isFinite(t.fillEnd)).reduce((s, t) => s + t.volume, 0);
-  const doneBatches = batches.filter((b) => b.lineEnd <= shiftEnd + 15); // выпуск в пределах смены
-  const bottledUnits = doneBatches.reduce((a, b) => a + b.units, 0);
-  const bottledM3 = (bottledUnits * p.canisterL) / 1000;
-  const lostBatches = p.batches - doneBatches.length;
-  const idleCost = waits.reduce((s, w) => s + Math.max(0, w), 0) / 60 * p.costIdleHour;
-  const starvedMin = batches.reduce((s, b) => s + b.starved, 0);
-  const opCost =
-    p.bays * p.costBayShift + p.scales * 6000 + p.gates * 5000 + p.dispatchers * 7000 +
-    p.blenders * 15000 + p.lines * 9000 + (p.dedicatedPump ? 6500 : 0) + (auto ? 20000 : 0) + (pre ? 4500 : 0) +
-    (starvedMin / 60) * 6000; // простой цеха из-за нехватки сырья
-  const totalCost = idleCost + opCost;
-  const bottleneck = [...resources].sort((a, b) => b.avgWait * (0.5 + b.utilization) - a.avgWait * (0.5 + a.utilization))[0].id;
+  const bottleneck: TwinResult['metrics']['bottleneck'] = blockedHours > 4 ? 'tanks' : avgWait > 45 ? 'posts' : shippedT < producedT * 0.9 ? 'trucks' : 'none';
   events.sort((a, b) => a.t - b.t);
 
   return {
-    params: p, horizon, trucks, batches, events, resources, queueSeries, levelSeries,
+    params: p, horizon, trucks, tanks, tankSeries, blocks, events,
+    resources: [
+      { id: 'posts', label: RESOURCE_LABEL.posts, capacity: p.posts, utilization: Math.min(1, postUtil), avgWait, maxQueue },
+      { id: 'gate', label: RESOURCE_LABEL.gate, capacity: 2, utilization: Math.min(1, gate.busyTime / (horizon * 2)), avgWait: gate.waitCount ? gate.waitSum / gate.waitCount : 0, maxQueue: gate.maxQueue }
+    ],
+    queueSeries, daily,
     metrics: {
-      served: done.length,
-      arrived: trucks.length,
-      volume,
-      avgTurnaround: avg(turns),
-      p90Turnaround: turns.length ? turns[Math.min(turns.length - 1, Math.floor(turns.length * 0.9))] : 0,
-      avgWait: avg(waits),
-      maxQueue: Math.max(0, ...queueSeries.map((s) => s.waitingBay)),
-      idleCost, opCost, totalCost,
-      costPerM3: bottledM3 ? totalCost / bottledM3 : 0,
-      bottleneck,
-      bottledUnits,
-      bottledM3,
-      batchesDone: doneBatches.length,
-      batchDelay: avg(batches.filter((b) => Number.isFinite(b.done)).map((b) => b.done - b.planned)),
-      starvedMin,
-      tankFullWait: trucks.reduce((s, t) => s + t.tankWait, 0),
-      margin: bottledM3 * p.marginM3 - totalCost,
-      planDone: p.batches ? doneBatches.length / p.batches : 1
+      arrived: trucks.length, served: served.length, avgWait, p90Wait: waits.length ? waits[Math.floor(waits.length * 0.9)] : 0,
+      maxQueue, idleHours: idleMin / 60, idleCost: (idleMin / 60) * p.idleRate,
+      planT, producedT, shippedT, planDone: planT ? producedT / planT : 1, shippedShare: producedT ? shippedT / producedT : 1,
+      blockedHours, lostT, minFree, postUtil: Math.min(1, postUtil), bottleneck,
+      avgTurnaround: avgWait, volume: shippedT
     }
   };
 }

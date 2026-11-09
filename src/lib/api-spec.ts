@@ -2,8 +2,8 @@ export interface Endpoint { method: 'GET' | 'POST' | 'DELETE'; path: string; acc
 
 export const API_ENDPOINTS: Endpoint[] = [
   { method: 'GET', path: '/api/health', access: 'публично', summary: 'Состояние сервиса: аптайм, число перезапусков, память', example: 'curl -s https://HOST/api/health' },
-  { method: 'GET', path: '/api/v1/simulate?scenario=smart', access: 'публично · кэш CDN', summary: 'Метрики предустановленного сценария (as-is, extra-bay, blender, smart)' },
-  { method: 'POST', path: '/api/v1/simulate', access: 'Диспетчер, Руководитель', summary: 'Расчёт пользовательского сценария. Тело: { params, includeTrace? }', example: `curl -X POST https://HOST/api/v1/simulate \\\n  -H 'Authorization: Bearer <token>' \\\n  -H 'Content-Type: application/json' \\\n  -d '{"params":{"blenders":2,"automation":true,"prepMode":"prebooked"}}'` },
+  { method: 'GET', path: '/api/v1/simulate?scenario=smart', access: 'публично · кэш CDN', summary: 'Метрики предустановленного сценария (as-is, short, tanks, slots)' },
+  { method: 'POST', path: '/api/v1/simulate', access: 'Диспетчер, Руководитель', summary: 'Расчёт пользовательского сценария. Тело: { params, includeTrace? }', example: `curl -X POST https://HOST/api/v1/simulate \\\n  -H 'Authorization: Bearer <token>' \\\n  -H 'Content-Type: application/json' \\\n  -d '{"params":{"plan92":40000,"plan95":30000,"posts":3,"profile":"slots"}}'` },
   { method: 'GET', path: '/api/v1/scenarios', access: 'публично / владелец', summary: 'Пресеты и сохранённые сценарии пользователя' },
   { method: 'POST', path: '/api/v1/scenarios', access: 'Диспетчер, Руководитель', summary: 'Сохранить сценарий: { name, params }' },
   { method: 'DELETE', path: '/api/v1/scenarios?id=…', access: 'владелец, Руководитель', summary: 'Удалить сохранённый сценарий' },

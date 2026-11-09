@@ -22,7 +22,7 @@ export function LineChart({ series, end, max, time, height = 180, unit = '' }: {
             <text x={P.l - 6} y={y(v) + 4} textAnchor="end" fontSize="10.5" fill="#94a3b8">{unit === '%' ? Math.round(v * 100) : Math.round(v)}</text>
           </g>
         ))}
-        {Array.from({ length: Math.floor(end / 120) + 1 }, (_, i) => <text key={i} x={x(i * 120)} y={H - 5} fontSize="10.5" fill="#94a3b8" textAnchor="middle">{fmtClock(i * 120)}</text>)}
+        {(() => { const stepT = end > 2880 ? 1440 * 5 : 120; return Array.from({ length: Math.floor(end / stepT) + 1 }, (_, i) => <text key={i} x={x(i * stepT)} y={H - 5} fontSize="10.5" fill="#94a3b8" textAnchor="middle">{end > 2880 ? `д.${i * 5 + 1}` : fmtClock(i * stepT)}</text>); })()}
         {series.map((s) => (
           <g key={s.name}>
             {s.area && <path d={`${path(s)} L${x(Math.min(end, s.points.at(-1)?.t ?? 0))},${y(0)} L${x(0)},${y(0)} Z`} fill={s.color} opacity=".08" />}
@@ -54,7 +54,35 @@ export function Gantt({ result, time, limit = 14 }: { result: TwinResult; time: 
           <span className="g-total num">{Math.round(t.exit - t.arrive)} мин</span>
         </div>
       ))}
-      <div className="g-legend"><span><i className="g-gate" />КПП</span><span><i className="g-scale" />весы, контроль</span><span><i className="g-wait" />ожидание</span><span><i className="g-bay" />пост</span><span><i className="g-fill" />слив</span><span><i className="g-out" />выезд</span></div>
+      <div className="g-legend"><span><i className="g-gate" />КПП</span><span><i className="g-wait" />ожидание</span><span><i className="g-bay" />пост</span><span><i className="g-fill" />налив</span><span><i className="g-out" />выезд</span></div>
+    </div>
+  );
+}
+
+/** Столбцы по дням: факт отгрузки против плана (линия) */
+export function DailyBars({ days, plan, time, height = 200 }: { days: { day: number; shipped: number; blockedH: number }[]; plan: number; time?: number; height?: number }) {
+  const W = 600, H = height, P = { l: 40, r: 8, t: 10, b: 22 };
+  const top = Math.max(plan * 1.4, ...days.map((d) => d.shipped)) || 1;
+  const bw = (W - P.l - P.r) / Math.max(1, days.length);
+  const y = (v: number) => H - P.b - (v / top) * (H - P.t - P.b);
+  const curDay = time != null ? Math.floor(time / 1440) : days.length;
+  return (
+    <div className="chart">
+      <svg viewBox={`0 0 ${W} ${H}`} role="img" aria-label="План и факт отгрузки по дням">
+        {[0, 0.5, 1].map((k) => <g key={k}><line x1={P.l} x2={W - P.r} y1={y(top * k)} y2={y(top * k)} stroke="#eef0f3" /><text x={P.l - 6} y={y(top * k) + 4} textAnchor="end" fontSize="10.5" fill="#94a3b8">{Math.round(top * k)}</text></g>)}
+        {days.map((d, i) => {
+          const future = i > curDay;
+          const h = H - P.b - y(d.shipped);
+          return (
+            <g key={d.day}>
+              <rect x={P.l + i * bw + bw * 0.15} y={y(d.shipped)} width={bw * 0.7} height={Math.max(0, h)} rx={2} fill={d.blockedH > 0 ? '#d97706' : '#2563eb'} opacity={future ? 0.25 : 0.85} />
+              {(i % 5 === 0 || i === days.length - 1) && <text x={P.l + i * bw + bw / 2} y={H - 6} fontSize="10.5" fill="#94a3b8" textAnchor="middle">{d.day}</text>}
+            </g>
+          );
+        })}
+        <line x1={P.l} x2={W - P.r} y1={y(plan)} y2={y(plan)} stroke="#0f172a" strokeDasharray="5 4" strokeWidth="1.5" />
+      </svg>
+      <div className="chart-legend"><span><i style={{ borderColor: '#2563eb' }} />отгружено за день, т</span><span><i style={{ borderColor: '#d97706' }} />день с затариванием</span><span><i className="dashed" style={{ borderColor: '#0f172a' }} />план в день</span></div>
     </div>
   );
 }

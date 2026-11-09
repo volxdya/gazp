@@ -4,182 +4,153 @@ import { useMemo } from 'react';
 import { ChevronRight } from 'lucide-react';
 import type { TwinResult } from '@/lib/twin/sim';
 import { PHOTOS, POIS, TOUR_ORDER, type PoiId, type ProcessKind } from '@/lib/twin/pois';
-import { fmt, liveAt, pinStatuses } from '@/lib/twin/derive';
+import { fmt, liveAt, pinStatuses, tanksAt } from '@/lib/twin/derive';
 
-/**
- * Мнемосхема участка: три полосы (приём → общие ресурсы → производство),
- * плитки идут по пути масла, связи показывают потоки продукта и проб.
- */
+/** Мнемосхема: приготовление и хранение бензина → налив автоцистерн */
 
-type Kind = 'meter' | 'lot' | 'bays' | 'tanks' | 'blend' | 'filling' | 'count';
+type Kind = 'plant' | 'tanks' | 'lab' | 'meter' | 'lot' | 'bays' | 'count';
 interface Tile { id: PoiId; x: number; y: number; w: number; kind: Kind }
 
 const H = 150;
-const L1 = 46, L2 = 256, L3 = 466;
+const L1 = 46, L2 = 276;
 const TILES: Tile[] = [
-  { id: 'gate', x: 40, y: L1, w: 150, kind: 'meter' },
-  { id: 'scales', x: 230, y: L1, w: 150, kind: 'meter' },
-  { id: 'lot', x: 420, y: L1, w: 220, kind: 'lot' },
-  { id: 'bays', x: 680, y: L1, w: 240, kind: 'bays' },
-  { id: 'exit', x: 960, y: L1, w: 200, kind: 'count' },
-  { id: 'control', x: 40, y: L2, w: 150, kind: 'meter' },
-  { id: 'lab', x: 230, y: L2, w: 150, kind: 'meter' },
-  { id: 'tanks', x: 680, y: L2, w: 240, kind: 'tanks' },
-  { id: 'pumps', x: 960, y: L2, w: 200, kind: 'meter' },
-  { id: 'blend', x: 960, y: L3, w: 200, kind: 'blend' },
-  { id: 'filling', x: 680, y: L3, w: 240, kind: 'filling' },
-  { id: 'warehouse', x: 420, y: L3, w: 220, kind: 'count' }
+  { id: 'blend', x: 40, y: L1, w: 200, kind: 'plant' },
+  { id: 'tanks', x: 280, y: L1, w: 420, kind: 'tanks' },
+  { id: 'lab', x: 740, y: L1, w: 180, kind: 'lab' },
+  { id: 'pumps', x: 960, y: L1, w: 200, kind: 'meter' },
+  { id: 'gate', x: 40, y: L2, w: 180, kind: 'meter' },
+  { id: 'lot', x: 260, y: L2, w: 260, kind: 'lot' },
+  { id: 'bays', x: 560, y: L2, w: 340, kind: 'bays' },
+  { id: 'exit', x: 940, y: L2, w: 220, kind: 'count' }
 ];
-
 const LANES: { y: number; label: string; kind: ProcessKind }[] = [
-  { y: L1 - 16, label: 'ПРИЁМ АВТОЦИСТЕРН', kind: 'external' },
-  { y: L2 - 16, label: 'ОБЩИЕ РЕСУРСЫ', kind: 'shared' },
-  { y: L3 - 16, label: 'ПРОИЗВОДСТВО', kind: 'internal' }
+  { y: L1 - 16, label: 'ПРИГОТОВЛЕНИЕ И ХРАНЕНИЕ', kind: 'internal' },
+  { y: L2 - 16, label: 'НАЛИВ АВТОЦИСТЕРН', kind: 'external' }
 ];
-
+const STATE_CLASS = { fill: 'st-fill', qc: 'st-qc', ship: 'st-ship', empty: 'st-empty' } as const;
 const toneOf = (t: string) => (t === 'warn' ? 'warn' : t === 'busy' ? 'busy' : 'ok');
 
 export default function SiteMap({ result, time, selected, onOpen }: { result: TwinResult; time: number; selected: PoiId | null; onOpen: (id: PoiId) => void }) {
   const live = useMemo(() => liveAt(result, time), [result, time]);
   const st = useMemo(() => pinStatuses(result, live), [result, live]);
-  const util = (id?: string) => (id ? result.resources.find((r) => r.id === id)?.utilization ?? 0 : 0);
-  const waiting = result.trucks.filter((t) => time >= t.tareEnd && !(time >= t.bayStart));
-  const bayState = Array.from({ length: Math.min(result.params.bays, 4) }, (_, i) => {
+  const tk = tanksAt(result, time);
+  const p = result.params;
+  const blocked = live.blocked[0] || live.blocked[1];
+  const waiting = useMemo(() => result.trucks.filter((t) => t.arrive <= time && time >= t.gateEnd && !(time >= t.bayStart)).slice(0, 10), [result, time]);
+  const bayState = Array.from({ length: Math.min(p.posts, 6) }, (_, i) => {
     const t = result.trucks.find((x) => x.bay === i && time >= x.bayStart && time < x.bayEnd);
     return !t ? 'free' : time >= t.fillStart && time < t.fillEnd ? 'flow' : 'busy';
   });
-  const active = result.batches.find((b) => time >= b.lineStart && time < b.lineEnd);
-  const fillFrac = active ? (time - active.lineStart) / Math.max(0.01, active.lineEnd - active.lineStart) : 0;
-  const busyBlend = Math.min(result.params.blenders, live.blending + live.qc);
-  const unloading = live.unloading > 0;
-  const feeding = result.batches.some((b) => time >= b.feedStart && time < b.feedEnd);
+  const gateU = result.resources.find((r) => r.id === 'gate')?.utilization ?? 0;
 
-  const viz = (t: Tile, poi: (typeof POIS)[number]) => {
+  const viz = (t: Tile) => {
     const inner = t.w - 36;
     switch (t.kind) {
+      case 'plant':
+        return (
+          <g transform="translate(18, 86)">
+            <rect width={inner} height={8} rx={4} className="m-track" />
+            <rect width={inner} height={8} rx={4} className={blocked ? 'm-fill hot' : 'm-fill int'} />
+            <text y={-8} className="m-cap">≈ {Math.round((p.plan92 + p.plan95) / (p.days * 24))} т/ч</text>
+          </g>
+        );
+      case 'tanks': {
+        const n = result.tanks.length;
+        const gap = 8, bw = Math.min(34, (inner - gap * (n - 1)) / Math.max(1, n));
+        return (
+          <g transform="translate(18, 66)">
+            {result.tanks.map((x, i) => {
+              const lv = tk.lv[i] ?? 0;
+              return (
+                <g key={x.id} transform={`translate(${i * (bw + gap)}, 0)`}>
+                  <rect width={bw} height={46} rx={6} className="tank-box" />
+                  <rect y={46 - 46 * lv} width={bw} height={46 * lv} rx={6} className={`tank-lvl ${x.grade === 0 ? 'g92' : 'g95'}`} />
+                  <circle cx={bw / 2} cy={-6} r={3.5} className={`tank-st ${STATE_CLASS[tk.st[i] ?? 'empty']}`} />
+                  <text x={bw / 2} y={60} textAnchor="middle" className="m-cap tiny">{x.name}</text>
+                </g>
+              );
+            })}
+          </g>
+        );
+      }
+      case 'lab': {
+        const qc = live.byGrade[0].qc + live.byGrade[1].qc;
+        return <text x={18} y={108} className="big num">{qc}<tspan className="big-unit"> на анализе</tspan></text>;
+      }
       case 'meter': {
-        const u = util(poi.resource);
+        const u = t.id === 'gate' ? gateU : live.baysBusy / Math.max(1, p.posts);
         return (
           <g transform="translate(18, 92)">
             <rect width={inner} height={6} rx={3} className="m-track" />
-            <rect width={Math.max(4, inner * u)} height={6} rx={3} className={`m-fill ${u > 0.75 ? 'hot' : ''}`} />
+            <rect width={Math.max(4, inner * u)} height={6} rx={3} className={`m-fill ${u > 0.85 ? 'hot' : ''}`} />
           </g>
         );
       }
       case 'lot':
         return (
           <g transform="translate(18, 80)">
-            {Array.from({ length: 8 }, (_, i) => {
+            {Array.from({ length: 10 }, (_, i) => {
               const tr = waiting[i];
-              return <rect key={i} x={i * ((inner - 7 * 6) / 8 + 6)} y={0} width={(inner - 7 * 6) / 8} height={22} rx={5} className={tr ? (tr.component === 0 ? 'truck a' : 'truck b') : 'slot'} />;
+              const w = (inner - 9 * 5) / 10;
+              return <rect key={i} x={i * (w + 5)} width={w} height={22} rx={5} className={tr ? (tr.component === 0 ? 'truck a' : 'truck b') : 'slot'} />;
             })}
           </g>
         );
       case 'bays':
         return (
-          <g transform="translate(18, 74)">
-            {bayState.map((s, i) => (
-              <g key={i} transform={`translate(0, ${i * 13})`}>
-                <rect width={inner} height={8} rx={4} className={`lane ${s}`} />
-              </g>
-            ))}
-          </g>
-        );
-      case 'tanks':
-        return (
-          <g transform="translate(18, 76)">
-            {[['A', live.levelA, 'a'], ['B', live.levelB, 'b']].map(([n, v, c], i) => (
-              <g key={n as string} transform={`translate(0, ${i * 24})`}>
-                <text x={0} y={9} className="m-cap strong">{n as string}</text>
-                <rect x={18} width={inner - 60} height={10} rx={5} className="m-track" />
-                <rect x={18} width={Math.max(5, (inner - 60) * (v as number))} height={10} rx={5} className={`lvl ${c} ${(v as number) > 0.9 ? 'full' : ''}`} />
-                <text x={inner} y={9} textAnchor="end" className="m-cap strong">{fmt.pct(v as number)}%</text>
-              </g>
-            ))}
-          </g>
-        );
-      case 'blend':
-        return (
-          <g transform="translate(18, 76)">
-            {Array.from({ length: result.params.blenders }, (_, i) => (
-              <g key={i} transform={`translate(${i * 40 + 15}, 15)`}>
-                <circle r={15} className={`vessel ${i < busyBlend ? 'on' : ''}`} />
-                {i < busyBlend && <path d="M-7,0 H7 M0,-7 V7" className="blade" />}
-              </g>
-            ))}
-          </g>
-        );
-      case 'filling':
-        return (
-          <g transform="translate(18, 88)">
-            <rect width={inner} height={8} rx={4} className="m-track" />
-            <rect width={Math.max(0, inner * fillFrac)} height={8} rx={4} className="m-fill int" />
-            {active && <text y={-8} className="m-cap">партия №{active.id} · {Math.round(fillFrac * 100)}%</text>}
+          <g transform="translate(18, 72)">
+            {bayState.map((s, i) => <rect key={i} y={i * 10} width={inner} height={6} rx={3} className={`lane ${s}`} />)}
           </g>
         );
       case 'count':
-        return <text x={18} y={110} className="big num">{t.id === 'exit' ? live.served : fmt.int(live.packed)}<tspan className="big-unit"> {t.id === 'exit' ? 'выехало' : 'бочек'}</tspan></text>;
+        return <text x={18} y={110} className="big num">{fmt.int(live.served)}<tspan className="big-unit"> машин · {fmt.t(live.shippedT)} т</tspan></text>;
     }
   };
 
   return (
     <div className="sitemap">
-      <svg viewBox="0 0 1200 640" className="sitemap-svg" role="group" aria-label="Схема участка">
+      <svg viewBox="0 0 1200 470" className="sitemap-svg" role="group" aria-label="Схема участка">
         <defs>
           <marker id="sm-arr" viewBox="0 0 10 10" refX="8" refY="5" markerWidth="6" markerHeight="6" orient="auto-start-reverse"><path d="M0,0 L10,5 L0,10 z" className="arr" /></marker>
         </defs>
-
         {LANES.map((l) => (
           <g key={l.label}>
             <circle cx={46} cy={l.y - 4} r={4} className={`lane-dot ${l.kind}`} />
             <text x={58} y={l.y} className="lane-label">{l.label}</text>
           </g>
         ))}
-
-        {/* связи */}
         <g className="links">
-          {[[190, 230], [380, 420], [640, 680], [920, 960]].map(([a, b]) => <line key={a} x1={a} y1={L1 + H / 2} x2={b - 2} y2={L1 + H / 2} className="flow ext" markerEnd="url(#sm-arr)" />)}
-          <line x1={115} y1={L2} x2={115} y2={L1 + H + 2} className="doc" />
-          <path d={`M305,${L2} V${L2 - 30} H530 V${L1 + H + 2}`} className="sample" />
-          <path d={`M305,${L2 + H} V${L3 - 30} H1010 V${L3 - 2}`} className="sample" />
-          <line x1={800} y1={L1 + H} x2={800} y2={L2 - 2} className={`pipe ext ${unloading ? 'on' : ''}`} markerEnd="url(#sm-arr)" />
-          <line x1={920} y1={L2 + H / 2} x2={958} y2={L2 + H / 2} className={`pipe int ${feeding ? 'on' : ''}`} markerEnd="url(#sm-arr)" />
-          <line x1={1110} y1={L2 + H} x2={1110} y2={L3 - 2} className={`pipe int ${feeding ? 'on' : ''}`} markerEnd="url(#sm-arr)" />
-          {[[960, 920], [680, 640]].map(([a, b]) => <line key={a} x1={a} y1={L3 + H / 2} x2={b + 2} y2={L3 + H / 2} className="flow int" markerEnd="url(#sm-arr)" />)}
+          <line x1={240} y1={L1 + H / 2} x2={278} y2={L1 + H / 2} className={`pipe int ${blocked ? '' : 'on'}`} markerEnd="url(#sm-arr)" />
+          <line x1={700} y1={L1 + H / 2} x2={738} y2={L1 + H / 2} className="sample" />
+          <path d={`M600,${L1 + H} V${L1 + H + 20} H1060 V${L1 + H + 2}`} className={`pipe ext ${live.loading ? 'on' : ''}`} />
+          <path d={`M1060,${L1 + H + 20} V${L2 - 24} H730 V${L2 - 2}`} className={`pipe ext ${live.loading ? 'on' : ''}`} markerEnd="url(#sm-arr)" />
+          {[[220, 260], [520, 560], [900, 940]].map(([a, b]) => <line key={a} x1={a} y1={L2 + H / 2} x2={b - 2} y2={L2 + H / 2} className="flow ext" markerEnd="url(#sm-arr)" />)}
         </g>
-
-        {/* легенда в свободном углу */}
-        <g transform={`translate(40, ${L3 + 8})`} className="legend-svg">
-          <line x1={0} y1={6} x2={26} y2={6} className="pipe ext on" /><text x={36} y={10}>слив</text>
-          <line x1={0} y1={34} x2={26} y2={34} className="pipe int on" /><text x={36} y={38}>подача</text>
-          <line x1={0} y1={62} x2={26} y2={62} className="sample" /><text x={36} y={66}>проба</text>
+        <g transform={`translate(40, ${L2 + H + 24})`} className="legend-svg">
+          <circle cx={6} cy={-4} r={4} className="tank-st st-fill" /><text x={16} y={0}>наполнение</text>
+          <circle cx={116} cy={-4} r={4} className="tank-st st-qc" /><text x={126} y={0}>анализ</text>
+          <circle cx={196} cy={-4} r={4} className="tank-st st-ship" /><text x={206} y={0}>на наливе</text>
+          <circle cx={296} cy={-4} r={4} className="tank-st st-empty" /><text x={306} y={0}>свободен</text>
+          <rect x={390} y={-10} width={12} height={12} rx={3} className="truck a" /><text x={408} y={0}>АИ-92</text>
+          <rect x={470} y={-10} width={12} height={12} rx={3} className="truck b" /><text x={488} y={0}>АИ-95</text>
         </g>
 
         {TILES.map((t) => {
-          const poi = POIS.find((p) => p.id === t.id)!;
+          const poi = POIS.find((x) => x.id === t.id)!;
           const s = st[t.id];
           return (
-            <g
-              key={t.id}
-              transform={`translate(${t.x}, ${t.y})`}
-              className={`tile p-${poi.process} ${selected === t.id ? 'on' : ''}`}
-              role="button"
-              tabIndex={0}
-              aria-label={`${poi.n}. ${poi.title}: ${s.text}`}
-              onClick={() => onOpen(t.id)}
-              onKeyDown={(e) => { if (e.key === 'Enter' || e.key === ' ') { e.preventDefault(); onOpen(t.id); } }}
-            >
+            <g key={t.id} transform={`translate(${t.x}, ${t.y})`} className={`tile p-${poi.process} ${selected === t.id ? 'on' : ''}`} role="button" tabIndex={0}
+              aria-label={`${poi.n}. ${poi.title}: ${s.text}`} onClick={() => onOpen(t.id)}
+              onKeyDown={(e) => { if (e.key === 'Enter' || e.key === ' ') { e.preventDefault(); onOpen(t.id); } }}>
               <rect width={t.w} height={H} rx={16} className="tile-bg" />
               <text x={18} y={32} className="tile-n num">{String(poi.n).padStart(2, '0')}</text>
               <circle cx={t.w - 20} cy={26} r={5} className={`tile-dot ${toneOf(s.tone)}`} />
               <text x={18} y={56} className="tile-title">{poi.title}</text>
-              {viz(t, poi)}
-              {t.kind !== 'tanks' && t.kind !== 'count' && <text x={18} y={H - 18} className="tile-val">{s.text}</text>}
+              {viz(t)}
+              {t.kind !== 'count' && t.kind !== 'lab' && t.kind !== 'tanks' && <text x={18} y={H - 18} className="tile-val">{s.text}</text>}
               {PHOTOS[t.id] && (
                 <g transform={`translate(${t.w - 34}, ${H - 32})`} className="cam" aria-hidden>
-                  <rect width={20} height={15} y={2} rx={4} />
-                  <circle cx={10} cy={9.5} r={4} />
-                  <rect x={6} width={8} height={4} rx={1.5} />
+                  <rect width={20} height={15} y={2} rx={4} /><circle cx={10} cy={9.5} r={4} /><rect x={6} width={8} height={4} rx={1.5} />
                 </g>
               )}
             </g>
@@ -187,9 +158,9 @@ export default function SiteMap({ result, time, selected, onOpen }: { result: Tw
         })}
       </svg>
 
-      <ol className="sitemap-list" aria-label="Путь масла">
+      <ol className="sitemap-list" aria-label="Путь бензина">
         {TOUR_ORDER.map((id) => {
-          const poi = POIS.find((p) => p.id === id)!;
+          const poi = POIS.find((x) => x.id === id)!;
           const s = st[id];
           return (
             <li key={id}>

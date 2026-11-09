@@ -1,14 +1,12 @@
 import * as THREE from 'three';
 import { OrbitControls } from 'three/addons/controls/OrbitControls.js';
 import type { TruckTrace, TwinResult } from '@/lib/twin/sim';
-import { levelAt } from '@/lib/twin/derive';
+import { tanksAt } from '@/lib/twin/derive';
 
-/** цвета тары по рецептурам */
-const RECIPE_COLORS = [0xf59e0b, 0x2f6bff, 0x0fae9f, 0xef4444];
 import { POIS, EYE, type PoiId } from '@/lib/twin/pois';
 
 /**
- * Изометрическая 3D-сцена участка технических масел на Three.js.
+ * Изометрическая 3D-сцена отгрузки бензина на Three.js.
  * Анимация — только отображение трассы симуляции: позиции машин вычисляются из времени модели.
  * Архитектура сцены: статичная «диорама» (дороги, здания, эстакада, резервуары) + динамический слой
  * (автоцистерны, шлагбаумы, индикаторы постов, поток в трубопроводе) + HTML-метки точек интереса.
@@ -46,10 +44,11 @@ const MAX_LANES = 6;
 
 const laneZ = (i: number, n: number) => 4 + (i - (Math.min(n, MAX_LANES) - 1) / 2) * 5.6;
 
-type Phase = 'hidden' | 'approach' | 'gate' | 'toScale' | 'tare' | 'wait' | 'bay' | 'toGross' | 'gross' | 'docs' | 'leave';
+type Phase = 'hidden' | 'approach' | 'gate' | 'wait' | 'bay' | 'leave' | 'gone';
 
 interface TruckVis {
   g: THREE.Group;
+  grade: 0 | 1;
   phase: Phase;
   waypoints: THREE.Vector3[];
   heading: number;
@@ -81,6 +80,7 @@ export class TerminalScene {
   private ro: ResizeObserver;
   private trace: TwinResult | null = null;
   private trucks = new Map<number, TruckVis>();
+  private pool: [THREE.Group[], THREE.Group[]] = [[], []];
   private truckGeo: Record<string, THREE.BufferGeometry> = {};
   private simTime = 0;
   private lastSimTime = 0;
@@ -89,6 +89,9 @@ export class TerminalScene {
   private dispensers: { light: THREE.Mesh; glow: THREE.Mesh }[] = [];
   private barriers: THREE.Object3D[] = [];
   private levelBars: THREE.Mesh[] = [];
+  private tankLights: THREE.MeshStandardMaterial[] = [];
+  private tankGroup = new THREE.Group();
+  private tankCounts: [number, number] = [3, 3];
   private flowTex: THREE.CanvasTexture | null = null;
   private arrows: THREE.MeshBasicMaterial[] = [];
   private highlight = new THREE.Group();
@@ -187,15 +190,10 @@ export class TerminalScene {
 
   setTrace(result: TwinResult) {
     this.trace = result;
-    if (Math.min(result.params.bays, MAX_LANES) !== this.lanes) this.buildLanes(result.params.bays);
-    for (const v of this.trucks.values()) this.dynamic.remove(v.g);
+    if (Math.min(result.params.posts, MAX_LANES) !== this.lanes) this.buildLanes(result.params.posts);
+    if (result.params.tanks92 !== this.tankCounts[0] || result.params.tanks95 !== this.tankCounts[1]) this.buildTankFarm(result.params.tanks92, result.params.tanks95);
+    for (const v of this.trucks.values()) { this.dynamic.remove(v.g); this.pool[v.grade].push(v.g); }
     this.trucks.clear();
-    for (const t of result.trucks) {
-      const g = this.makeTruck(t.id, t.component);
-      g.visible = false;
-      this.dynamic.add(g);
-      this.trucks.set(t.id, { g, phase: 'hidden', waypoints: [], heading: 0, lane: -1, slot: -1 });
-    }
     this.lastSimTime = -999;
   }
 
@@ -626,51 +624,65 @@ export class TerminalScene {
   }
 
   private buildTanks() {
-    // обвалование
+    // обвалование резервуарного парка (статично), сами резервуары — по числу из модели
     const wall = mat(0xd5dbe3);
     this.box(50, 1.2, 0.6, wall, 18, 0, -50.5);
     this.box(50, 1.2, 0.6, wall, 18, 0, -25.5);
     this.box(0.6, 1.2, 25, wall, -6.7, 0, -38);
     this.box(0.6, 1.2, 25, wall, 42.7, 0, -38);
     this.flat(49, 24.4, mat(0xe9edf1), 18, 0.04, -38);
+    this.buildTankFarm(3, 3);
+  }
+
+  /** Резервуары двумя рядами: АИ-92 ближе к эстакаде, АИ-95 дальше */
+  private buildTankFarm(n92: number, n95: number) {
+    this.root.remove(this.tankGroup);
+    this.tankGroup.traverse((o) => (o as THREE.Mesh).geometry?.dispose());
+    this.tankGroup = new THREE.Group();
+    this.levelBars = [];
+    this.tankLights = [];
+    this.beacons = [];
+    this.tankCounts = [n92, n95];
+    const g = this.tankGroup;
     const shell = mat(C.tank, { roughness: 0.45, metalness: 0.15 });
-    PRODUCTS.forEach((p, i) => {
-      const x = 0 + i * 12, z = -38, r = 5, h = 11;
-      this.cyl(r + 0.4, r + 0.4, 0.5, mat(C.concrete), x, 0, z, 40);
-      this.cyl(r, r, h, shell, x, 0.5, z, 48);
-      this.cyl(r + 0.05, r + 0.05, 0.9, mat(p.color, { roughness: 0.5 }), x, h - 1.6, z, 48);
-      this.cyl(0.8, r + 0.15, 1.3, mat(0xeef2f6, { roughness: 0.5 }), x, h + 0.5, z, 48);
-      // перила на крыше
-      const rail = new THREE.Mesh(new THREE.TorusGeometry(r - 0.2, 0.06, 6, 48), mat(C.steel));
-      rail.rotation.x = Math.PI / 2;
-      rail.position.set(x, h + 1.5, z);
-      this.root.add(rail);
-      // шкала уровня
-      this.box(0.7, h - 3, 0.25, mat(0xd8dee6), x - 2.2, 1.4, z + r - 0.05, this.root, false);
-      const lvl = this.box(0.5, h - 3.2, 0.3, mat(p.color, { emissive: p.color, emissiveIntensity: 0.25 }), x - 2.2, 1.5, z + r, this.root, false);
-      lvl.geometry.translate(0, -(h - 3.2) / 2, 0);
-      lvl.position.y = 1.5;
-      lvl.userData.full = h - 3.2;
-      this.levelBars.push(lvl);
-      const bm = new THREE.MeshStandardMaterial({ color: 0x7f1d1d, emissive: 0xff2020, emissiveIntensity: 0 });
-      this.beacons.push(bm);
-      const beacon = new THREE.Mesh(new THREE.SphereGeometry(0.28, 10, 8), bm);
-      beacon.position.set(x, h + 1.45, z);
-      this.root.add(beacon);
-      const lab = this.label(p.name, p.color);
-      lab.position.set(x + 1.6, 5.2, z + r + 0.08);
-      this.root.add(lab);
-      // лестница
-      const ladder = this.box(0.9, h, 0.15, mat(C.dark), x + r * 0.7, 0.5, z + r * 0.7, this.root, false);
-      ladder.rotation.y = Math.PI / 4;
+    const colors = [0x2f6bff, 0x12b981];
+    ([[n92, -32.5, 0], [n95, -44, 1]] as const).forEach(([n, z, grade]) => {
+      const step = Math.min(12, 46 / Math.max(1, n));
+      const r = Math.min(5, step * 0.42), h = r * 2.1;
+      for (let k = 0; k < n; k++) {
+        const x = -1 + step / 2 + k * step;
+        this.cyl(r + 0.35, r + 0.35, 0.4, mat(C.concrete), x, 0, z, 36, g);
+        this.cyl(r, r, h, shell, x, 0.4, z, 40, g);
+        this.cyl(r + 0.05, r + 0.05, 0.6, mat(colors[grade], { roughness: 0.5 }), x, h - 1.2, z, 40, g);
+        this.cyl(0.6, r + 0.12, 1, mat(0xeef2f6, { roughness: 0.5 }), x, h + 0.4, z, 40, g);
+        // шкала уровня
+        this.box(0.6, h - 2.4, 0.2, mat(0xd8dee6), x - r * 0.45, 1.1, z + r - 0.03, g, false);
+        const lvl = this.box(0.42, h - 2.6, 0.26, mat(colors[grade], { emissive: colors[grade], emissiveIntensity: 0.25 }), x - r * 0.45, 1.2, z + r, g, false);
+        lvl.geometry.translate(0, -(h - 2.6) / 2, 0);
+        lvl.position.y = 1.2;
+        this.levelBars.push(lvl);
+        // огонь состояния на крыше: наполнение / анализ / налив / свободен
+        const lm = new THREE.MeshStandardMaterial({ color: 0x94a3b8, emissive: 0x94a3b8, emissiveIntensity: 0.6 });
+        this.tankLights.push(lm);
+        const light = new THREE.Mesh(new THREE.SphereGeometry(0.45, 12, 8), lm);
+        light.position.set(x, h + 1.15, z);
+        g.add(light);
+        const bm = new THREE.MeshStandardMaterial({ color: 0x7f1d1d, emissive: 0xff2020, emissiveIntensity: 0 });
+        this.beacons.push(bm);
+        const beacon = new THREE.Mesh(new THREE.SphereGeometry(0.2, 8, 6), bm);
+        beacon.position.set(x + r * 0.6, h + 0.6, z);
+        g.add(beacon);
+        const lab = this.label(`${grade === 0 ? '92' : '95'}-${k + 1}`, colors[grade]);
+        lab.scale.setScalar(Math.min(1, r / 4.2));
+        lab.position.set(x + r * 0.25, h * 0.5, z + r + 0.08);
+        g.add(lab);
+      }
     });
-    // коллектор под резервуарами
-    const pipeM = mat(0x9aa8b8, { metalness: 0.55, roughness: 0.35 });
-    PRODUCTS.forEach((p, i) => {
-      const y = 1 + i * 0.55;
-      tube([new THREE.Vector3(i * 12, y, -33), new THREE.Vector3(i * 12, y, -29 + i * 0.6), new THREE.Vector3(44, y, -29 + i * 0.6)], 0.22, mat(p.color, { roughness: 0.5 }), this.root);
-    });
-    void pipeM;
+    // коллекторы к насосной
+    tube([new THREE.Vector3(-2, 1, -28), new THREE.Vector3(44, 1, -28)], 0.24, mat(colors[0], { roughness: 0.5 }), g);
+    tube([new THREE.Vector3(-2, 1.6, -38.5), new THREE.Vector3(40, 1.6, -38.5), new THREE.Vector3(44, 1.6, -28.6)], 0.24, mat(colors[1], { roughness: 0.5 }), g);
+    this.root.add(g);
+    if (this.hemi) this.applyNight();
   }
 
   private buildPumpHouse() {
@@ -726,17 +738,13 @@ export class TerminalScene {
     this.flowMesh = flow;
   }
   private flowMesh: THREE.Mesh | null = null;
-  private canisters: THREE.InstancedMesh | null = null;
-  private canisterMat = new THREE.MeshStandardMaterial({ color: 0xf59e0b, roughness: 0.45 });
-  private conveyorPhase = 0;
   private fillerLight: THREE.MeshStandardMaterial | null = null;
-  private pallets: THREE.Object3D[] = [];
   private bottleFlowMat: THREE.MeshBasicMaterial | null = null;
   private feedTex: THREE.CanvasTexture | null = null;
   private blenderGroups: THREE.Group[] = [];
   private agitators: THREE.Object3D[] = [];
 
-  /** Цех розлива масла в канистры и склад готовой продукции (без крыши — видно оборудование внутри) */
+  /** Установка приготовления бензина (без крыши — видно оборудование внутри) */
   private buildBottling() {
     const x0 = 10, x1 = 56, z0 = 30, z1 = 50, h = 4.2, t = 0.5;
     const cx = (x0 + x1) / 2, cz = (z0 + z1) / 2;
@@ -784,35 +792,19 @@ export class TerminalScene {
       this.blenderGroups.push(g);
     }
     this.box(9, 0.25, 0.5, mat(C.steel, { metalness: 0.5 }), 14.5, 4.6, 40, this.root, false);
-    // конвейер
-    const belt = this.box(24, 0.3, 1.5, mat(0x3a4656, { roughness: 0.6 }), 26, 1.1, 40);
-    belt.castShadow = false;
-    for (let x = 15; x <= 37; x += 3) {
-      this.box(0.2, 1.1, 0.2, mat(C.steel), x, 0.27, 39.4, this.root, false);
-      this.box(0.2, 1.1, 0.2, mat(C.steel), x, 0.27, 40.6, this.root, false);
+    // узел смешения компонентов: колонны, обвязка и пульт
+    const colM = mat(0xf3f6f9, { roughness: 0.35, metalness: 0.3 });
+    for (const [cx2, cz2, ch] of [[24, 35, 7], [24, 45, 6], [31, 35, 5.5], [31, 45, 6.5]] as const) {
+      this.cyl(1.3, 1.3, ch, colM, cx2, 0.27, cz2, 28);
+      this.cyl(1.35, 1.35, 0.35, mat(C.blue), cx2, ch * 0.7, cz2, 28);
+      this.cyl(0.6, 1.3, 0.8, mat(0xe2e8f0), cx2, ch + 0.27, cz2, 28);
     }
-    this.box(24, 0.35, 0.12, mat(C.steel, { metalness: 0.5 }), 26, 1.3, 39.2, this.root, false);
-    this.box(24, 0.35, 0.12, mat(C.steel, { metalness: 0.5 }), 26, 1.3, 40.8, this.root, false);
-    // разливочный автомат, укупорка, этикетировщик
-    this.box(3.4, 2.6, 2.6, mat(0xffffff, { roughness: 0.35 }), 20, 1.4, 40);
-    this.box(3.6, 0.4, 2.8, band, 20, 4, 40);
+    tube([new THREE.Vector3(14.5, 3, 34), new THREE.Vector3(24, 3, 35), new THREE.Vector3(31, 3, 35), new THREE.Vector3(36, 3, 40)], 0.25, mat(C.orange, { roughness: 0.45 }), this.root);
+    tube([new THREE.Vector3(14.5, 3, 46), new THREE.Vector3(24, 3, 45), new THREE.Vector3(31, 3, 45), new THREE.Vector3(36, 3, 40)], 0.25, mat(0x12b981, { roughness: 0.45 }), this.root);
+    this.box(2.2, 2.4, 1, mat(C.white), 36.5, 0.27, 40);
     const light = new THREE.MeshStandardMaterial({ color: C.green, emissive: C.green, emissiveIntensity: 0.8 });
     this.fillerLight = light;
-    this.box(0.5, 0.5, 0.5, light, 21.3, 4.4, 40, this.root, false);
-    for (let i = 0; i < 4; i++) this.box(0.18, 0.9, 0.18, mat(C.steel, { metalness: 0.6 }), 19 + i * 0.7, 2.1, 40, this.root, false);
-    this.box(2, 2.2, 2.2, mat(0xf3f6fa), 25.5, 1.4, 40);
-    this.box(2.2, 0.3, 2.4, mat(0x14b8a6), 25.5, 3.6, 40);
-    this.box(1.8, 1.6, 2, mat(0xf3f6fa), 30, 1.4, 40);
-    this.box(0.9, 1.6, 0.6, mat(C.dark), 17, 0.27, 37.6);
-    // палетная зона
-    this.box(2.2, 0.3, 2.2, mat(0xc49a6c), 36, 0.27, 33.5);
-    this.box(2, 1.2, 1.8, mat(0xf59e0b, { roughness: 0.5 }), 36, 0.57, 33.5);
-    // канистры на конвейере (инстансы)
-    const canGeo = new THREE.CylinderGeometry(0.34, 0.34, 0.9, 14);
-    const n = 22;
-    this.canisters = new THREE.InstancedMesh(canGeo, this.canisterMat, n);
-    this.canisters.castShadow = true;
-    this.root.add(this.canisters);
+    this.box(0.5, 0.5, 0.5, light, 36.5, 2.8, 40, this.root, false);
     // рабочие
     const worker = (x: number, z: number, rot: number) => {
       const g = new THREE.Group();
@@ -831,33 +823,6 @@ export class TerminalScene {
     worker(33.5, 37.6, 0.6);
     worker(47, 41, -1.2);
     worker(-29, 4.5, 0.3);
-    // склад: стеллажи
-    const rackM = mat(0x2f6bff, { metalness: 0.3, roughness: 0.5 });
-    const palletM = mat(0xc49a6c);
-    const stackM = [0x2f6bff, 0x12b981, 0xf59e0b, 0xef4444].map((c) => mat(c, { roughness: 0.5 }));
-    let k = 0;
-    for (const rz of [33, 38.5, 47]) {
-      for (const lvl of [0, 1.9]) {
-        if (lvl > 0) this.box(13, 0.15, 2.4, mat(C.steel, { metalness: 0.4 }), 48, 0.27 + lvl, rz, this.root, false);
-        for (let i = 0; i < 4; i++) {
-          const px = 43 + i * 3.2;
-          const g = new THREE.Group();
-          const pal = new THREE.Mesh(new THREE.BoxGeometry(2.4, 0.2, 2), palletM);
-          pal.position.y = 0.1;
-          const stack = new THREE.Mesh(new THREE.BoxGeometry(2.2, 1.3, 1.8), stackM[k % 4]);
-          stack.position.y = 0.85;
-          pal.castShadow = stack.castShadow = true;
-          g.add(pal, stack);
-          g.position.set(px, 0.27 + lvl + (lvl ? 0.08 : 0), rz);
-          g.visible = false;
-          this.root.add(g);
-          this.pallets.push(g);
-          k++;
-        }
-      }
-      for (const px of [41.6, 48, 54.4]) this.box(0.18, 3.8, 0.18, rackM, px, 0.27, rz - 1.1, this.root, false);
-      for (const px of [41.6, 48, 54.4]) this.box(0.18, 3.8, 0.18, rackM, px, 0.27, rz + 1.1, this.root, false);
-    }
     // освещение цеха и склада
     for (const [lx, lz, it] of [[18, 40, 70], [31, 40, 70], [48, 40, 60]] as const) {
       const pl = new THREE.PointLight(0xfff0d6, 0, 26, 1.5);
@@ -865,11 +830,6 @@ export class TerminalScene {
       pl.userData.nightIntensity = it;
       this.root.add(pl);
     }
-    // погрузчик
-    this.box(1.6, 1.1, 2.4, mat(C.orange), 47, 0.27, 43.2);
-    this.box(1.4, 1.2, 0.6, mat(C.dark), 47, 1.37, 42.6);
-    this.box(0.15, 2.6, 0.15, mat(C.dark), 46.5, 0.27, 41.6, this.root, false);
-    this.box(0.15, 2.6, 0.15, mat(C.dark), 47.5, 0.27, 41.6, this.root, false);
     // трубопровод насосная → цех розлива (надземно, вдоль восточной ограды)
     const path = [new THREE.Vector3(55, 1.6, -30), new THREE.Vector3(58, 1.6, -30), new THREE.Vector3(58, 5.4, -30), new THREE.Vector3(58, 5.4, 34), new THREE.Vector3(57, 5.4, 34), new THREE.Vector3(14, 5.4, 34)];
     tube(path, 0.3, mat(C.orange, { roughness: 0.45 }), this.root);
@@ -886,46 +846,22 @@ export class TerminalScene {
     this.root.add(new THREE.Mesh(new THREE.TubeGeometry(curve as unknown as THREE.Curve<THREE.Vector3>, 120, 0.36, 8, false), flowM));
   }
 
+  /** Установка работает непрерывно; при затаривании — жёлтый сигнал и мешалки останавливаются */
   private updateBottling(dt: number) {
     const tr = this.trace;
-    if (!tr || !this.canisters) return;
+    if (!tr) return;
     const now = this.simTime;
-    let active: (typeof tr.batches)[number] | null = null;
-    let bottled = 0, feeding = false, blending = 0;
-    for (const b of tr.batches) {
-      if (now >= b.feedStart && now < b.feedEnd) feeding = true;
-      if (now >= b.feedStart && now < b.qcEnd) blending++;
-      if (now >= b.lineStart && now < b.lineEnd) active = b;
-      if (now >= b.lineStart) bottled += now >= b.lineEnd ? b.units : b.units * ((now - b.lineStart) / Math.max(0.01, b.lineEnd - b.lineStart));
-    }
-    if (active) {
-      this.conveyorPhase += dt * (0.9 + this.simSpeed * 0.004);
-      this.canisterMat.color.setHex(RECIPE_COLORS[active.product % 4]);
-    }
-    const m = new THREE.Matrix4();
-    const n = this.canisters.count;
-    for (let i = 0; i < n; i++) {
-      const u = ((i / n + this.conveyorPhase * 0.05) % 1 + 1) % 1;
-      const x = 15 + u * 22;
-      const show = active ? x > 18.5 || u < 0.06 : x > 21.5 && i % 2 === 0;
-      m.makeTranslation(x, 1.72, 40);
-      if (!show) m.scale(new THREE.Vector3(0.0001, 0.0001, 0.0001));
-      this.canisters.setMatrixAt(i, m);
-    }
-    this.canisters.instanceMatrix.needsUpdate = true;
+    const blocked = tr.blocks.some((b) => now >= b.from && now < b.to);
     if (this.fillerLight) {
-      const col = active ? C.orange : C.green;
+      const col = blocked ? 0xf59e0b : C.green;
       this.fillerLight.color.setHex(col);
       this.fillerLight.emissive.setHex(col);
-      this.fillerLight.emissiveIntensity = active ? 0.7 + 0.6 * Math.abs(Math.sin(performance.now() / 240)) : 0.7;
+      this.fillerLight.emissiveIntensity = blocked ? 0.6 + 0.6 * Math.abs(Math.sin(performance.now() / 240)) : 0.8;
     }
-    
-    if (this.feedTex && feeding) this.feedTex.offset.x -= dt * 1.4;
-    if (this.bottleFlowMat) this.bottleFlowMat.opacity += ((feeding ? 0.95 : 0) - this.bottleFlowMat.opacity) * Math.min(1, dt * 4);
-    this.blenderGroups.forEach((g, i) => { g.visible = i < tr.params.blenders; });
-    this.agitators.forEach((a, i) => { if (i < blending) a.rotation.y += dt * (2 + this.simSpeed * 0.01); });
-    const visible = Math.min(this.pallets.length, Math.floor(bottled / 30));
-    this.pallets.forEach((p, i) => { p.visible = i < visible; });
+    const running = !blocked;
+    if (this.feedTex && running) this.feedTex.offset.x += dt * 1.2;
+    if (this.bottleFlowMat) this.bottleFlowMat.opacity += ((running ? 0.9 : 0.15) - this.bottleFlowMat.opacity) * Math.min(1, dt * 4);
+    this.agitators.forEach((a) => { if (running) a.rotation.y += dt * 2.4; });
   }
 
   private buildTrees() {
@@ -1072,49 +1008,32 @@ export class TerminalScene {
     return g;
   }
 
-  private targetFor(t: TruckTrace, phase: Phase, k: number): THREE.Vector3 {
+  private targetFor(t: TruckTrace, phase: Phase, k: number): THREE.Vector3 | null {
     switch (phase) {
-      case 'approach': return new THREE.Vector3(GATE_X - 13 * (k + 1), 0, SOUTH_Z);
+      case 'approach': return k < 3 ? new THREE.Vector3(GATE_X - 13 * (k + 1), 0, SOUTH_Z) : null; // остальные ждут за воротами
       case 'gate': return new THREE.Vector3(GATE_X, 0, SOUTH_Z);
-      case 'toScale': return new THREE.Vector3(SCALE_IN_X - 11 - 13 * k, 0, SOUTH_Z);
-      case 'tare': return new THREE.Vector3(SCALE_IN_X, 0, SOUTH_Z);
-      case 'wait': {
-        const s = Math.min(k, 11);
-        return s < 6 ? new THREE.Vector3(-28 + s * 5.5, 0, 33) : new THREE.Vector3(-25.25 + (s - 6) * 5.5, 0, 45.5);
-      }
+      case 'wait': return k < 6 ? new THREE.Vector3(-28 + k * 5.5, 0, 33) : k < 12 ? new THREE.Vector3(-25.25 + (k - 6) * 5.5, 0, 45.5) : null;
       case 'bay': return new THREE.Vector3(BAY_X, 0, laneZ(t.bay % MAX_LANES, this.lanes));
-      case 'toGross': return new THREE.Vector3(SCALE_OUT_X + 13 + 13 * k, 0, NORTH_Z);
-      case 'gross': return new THREE.Vector3(SCALE_OUT_X, 0, NORTH_Z);
-      case 'docs': return new THREE.Vector3(DOCS_X, 0, NORTH_Z);
       case 'leave': return new THREE.Vector3(-125, 0, NORTH_Z);
-      default: return new THREE.Vector3(-125, 0, SOUTH_Z);
+      default: return null;
     }
   }
 
-  private route(from: THREE.Vector3, prev: Phase, phase: Phase, target: THREE.Vector3, t: TruckTrace): THREE.Vector3[] {
+  private route(from: THREE.Vector3, prev: Phase, phase: Phase, target: THREE.Vector3): THREE.Vector3[] {
     const V = (x: number, z: number) => new THREE.Vector3(x, 0, z);
     if (phase === 'wait' && prev !== 'wait') return [V(target.x, SOUTH_Z), V(target.x, target.z)];
-    if (phase === 'bay') {
-      const z = target.z;
-      return [V(from.x, Math.min(from.z, 27)), V(-12, SOUTH_Z - 1), V(-12, z), target];
-    }
-    if (phase === 'toGross' && prev === 'bay') return [V(30, from.z), V(34, from.z - 2), V(34, NORTH_Z), target];
-    if (phase === 'gross' && prev === 'bay') return [V(30, from.z), V(34, from.z - 2), V(34, NORTH_Z), target];
+    if (phase === 'bay') return [V(from.x, Math.min(from.z, 27)), V(-12, SOUTH_Z - 1), V(-12, target.z), target];
+    if (phase === 'leave' && prev === 'bay') return [V(30, from.z), V(34, from.z - 2), V(34, NORTH_Z), target];
     return [target];
   }
 
   private phaseOf(t: TruckTrace, now: number): Phase {
     if (now < t.arrive - 1.2) return 'hidden';
-    if (Number.isFinite(t.exit) && now >= t.exit) return now < t.exit + 2 ? 'leave' : 'hidden';
+    if (now >= t.bayEnd) return now < t.bayEnd + 240 ? 'leave' : 'hidden';
     if (!(now >= t.gateStart)) return 'approach';
     if (!(now >= t.gateEnd)) return 'gate';
-    if (!(now >= t.tareStart)) return 'toScale';
-    if (!(now >= t.tareEnd)) return 'tare';
     if (!(now >= t.bayStart)) return 'wait';
-    if (!(now >= t.bayEnd)) return 'bay';
-    if (!(now >= t.grossStart)) return 'toGross';
-    if (!(now >= t.grossEnd)) return 'gross';
-    return 'docs';
+    return 'bay';
   }
 
   private updateTrucks(dt: number) {
@@ -1123,67 +1042,71 @@ export class TerminalScene {
     const now = this.simTime;
     const jump = Math.abs(now - this.lastSimTime) > 25 || now < this.lastSimTime - 0.01;
     this.lastSimTime = now;
-    const speed = 14 + this.simSpeed * 0.07;
+    const speed = 14 + Math.min(this.simSpeed, 1440) * 0.05;
 
-    const queues: Partial<Record<Phase, TruckTrace[]>> = {};
-    const phases = new Map<number, Phase>();
-    for (const t of tr.trucks) {
-      const p = this.phaseOf(t, now);
-      phases.set(t.id, p);
-      if (p === 'approach' || p === 'toScale' || p === 'wait' || p === 'toGross') (queues[p] ??= []).push(t);
+    // окно активных машин: машины отсортированы по прибытию, больше двух суток на базе никто не стоит
+    const list = tr.trucks;
+    let lo = 0, hi = list.length;
+    while (lo < hi) { const m = (lo + hi) >> 1; if (list[m].arrive < now - 2880) lo = m + 1; else hi = m; }
+    const active: { t: TruckTrace; p: Phase }[] = [];
+    for (let i = lo; i < list.length && list[i].arrive <= now + 2; i++) {
+      const p = this.phaseOf(list[i], now);
+      if (p !== 'hidden') active.push({ t: list[i], p });
     }
-    const order = (p: Phase, t: TruckTrace) => {
-      const list = queues[p];
-      if (!list) return 0;
-      return list.indexOf(t);
-    };
-    queues.approach?.sort((a, b) => a.arrive - b.arrive);
-    queues.toScale?.sort((a, b) => a.gateEnd - b.gateEnd);
-    queues.toGross?.sort((a, b) => a.bayEnd - b.bayEnd);
-    // места на стоянке закрепляются, чтобы машины не «перескакивали»
+    const approach = active.filter((a) => a.p === 'approach').sort((a, b) => a.t.arrive - b.t.arrive);
+    const seen = new Set<number>();
+    // места на площадке закрепляются, чтобы машины не «перескакивали» и не наезжали друг на друга
     const taken = new Set<number>();
-    for (const t of queues.wait ?? []) { const v = this.trucks.get(t.id)!; if (v.phase === 'wait' && v.slot >= 0) taken.add(v.slot); }
+    for (const a of active) { const v = this.trucks.get(a.t.id); if (a.p === 'wait' && v && v.phase === 'wait' && v.slot >= 0) taken.add(v.slot); }
 
-    for (const t of tr.trucks) {
-      const v = this.trucks.get(t.id);
-      if (!v) continue;
-      const p = phases.get(t.id)!;
-      if (p === 'hidden') {
-        v.g.visible = false;
-        v.phase = 'hidden';
-        v.waypoints = [];
-        continue;
-      }
+    for (const { t, p } of active) {
+      let v = this.trucks.get(t.id);
+      if (v && v.phase === 'gone') { seen.add(t.id); continue; }
       let k = 0;
+      if (p === 'approach') k = approach.findIndex((a) => a.t === t);
       if (p === 'wait') {
-        if (v.phase !== 'wait' || v.slot < 0) {
-          let s = 0;
-          while (taken.has(s)) s++;
-          v.slot = s;
-          taken.add(s);
-        }
-        k = v.slot;
-      } else {
-        v.slot = -1;
-        k = order(p, t);
+        if (!v || v.phase !== 'wait' || v.slot < 0) {
+          let sl = 0;
+          while (taken.has(sl)) sl++;
+          if (v) v.slot = sl;
+          taken.add(sl);
+          k = sl;
+        } else k = v.slot;
       }
       const target = this.targetFor(t, p, k);
-      if (!v.g.visible || jump) {
-        v.g.visible = true;
-        v.g.position.copy(v.phase === 'hidden' && !jump ? new THREE.Vector3(-125, 0, SOUTH_Z) : target);
-        if (jump) { v.waypoints = []; v.heading = p === 'wait' ? Math.PI / 2 : (p === 'toGross' || p === 'gross' || p === 'docs' || p === 'leave') ? Math.PI : 0; v.g.rotation.y = -v.heading; }
-        else v.waypoints = [target];
+      if (!target || (p === 'leave' && jump)) {
+        if (v) { this.dynamic.remove(v.g); this.pool[v.grade].push(v.g); this.trucks.delete(t.id); }
+        continue;
+      }
+      seen.add(t.id);
+      if (!v) {
+        const g = this.pool[t.component].pop() ?? this.makeTruck(t.id, t.component);
+        this.dynamic.add(g);
+        v = { g, grade: t.component, phase: 'hidden', waypoints: [], heading: 0, lane: -1, slot: p === 'wait' ? k : -1 };
+        this.trucks.set(t.id, v);
+        const start = jump || p !== 'approach' ? target : new THREE.Vector3(-125, 0, SOUTH_Z);
+        v.g.position.copy(start);
+        v.heading = p === 'wait' ? Math.PI / 2 : p === 'leave' ? Math.PI : 0;
+        v.g.rotation.y = -v.heading;
+        v.waypoints = start === target ? [] : [target];
+        v.phase = p;
+      } else if (jump) {
+        v.g.position.copy(target);
+        v.waypoints = [];
+        v.heading = p === 'wait' ? Math.PI / 2 : 0;
+        v.g.rotation.y = -v.heading;
         v.phase = p;
       } else if (p !== v.phase) {
-        v.waypoints = this.route(v.g.position, v.phase, p, target, t);
+        v.waypoints = this.route(v.g.position, v.phase, p, target);
         v.phase = p;
-      } else {
+      } else if (p !== 'leave') {
         const last = v.waypoints[v.waypoints.length - 1] ?? v.g.position;
         if (last.distanceToSquared(target) > 0.5) {
           if (v.waypoints.length) v.waypoints[v.waypoints.length - 1] = target;
           else v.waypoints = [target];
         }
       }
+      if (p !== 'wait') v.slot = -1;
       // движение по точкам маршрута
       let budget = speed * dt;
       while (budget > 0 && v.waypoints.length) {
@@ -1202,11 +1125,16 @@ export class TerminalScene {
       let diff = v.heading - cur;
       diff = Math.atan2(Math.sin(diff), Math.cos(diff));
       v.g.rotation.y = -(cur + diff * Math.min(1, dt * 7));
+      // доехала до края — исчезает
+      if (p === 'leave' && !v.waypoints.length) { this.dynamic.remove(v.g); this.pool[v.grade].push(v.g); v.phase = 'gone'; }
+    }
+    for (const [id, v] of this.trucks) {
+      if (!seen.has(id)) { if (v.phase !== 'gone') { this.dynamic.remove(v.g); this.pool[v.grade].push(v.g); } this.trucks.delete(id); }
     }
 
     // посты слива
     const states = this.dispensers.map(() => 0);
-    for (const t of tr.trucks) {
+    for (const { t } of active) {
       if (t.bay < 0 || !(now >= t.bayStart && now < t.bayEnd)) continue;
       const i = t.bay % MAX_LANES;
       if (i >= states.length) continue;
@@ -1223,14 +1151,14 @@ export class TerminalScene {
     });
     const filling = states.some((s) => s === 2);
     if (this.flowTex && this.flowMesh) {
-      this.flowTex.offset.x += dt * (filling ? 1.6 : 0); // слив: от постов к резервуарам
+      this.flowTex.offset.x -= dt * (filling ? 1.6 : 0); // налив: от резервуаров к постам
       const fm = this.flowMesh.material as THREE.MeshBasicMaterial;
       fm.opacity += ((filling ? 0.95 : 0) - fm.opacity) * Math.min(1, dt * 4);
     }
 
     // шлагбаумы
-    const openIn = tr.trucks.some((t) => now >= t.gateEnd - 0.4 && now < t.gateEnd + 0.8);
-    const openOut = tr.trucks.some((t) => Number.isFinite(t.exit) && now >= t.exit - 0.3 && now < t.exit + 0.8);
+    const openIn = active.some(({ t }) => now >= t.gateEnd - 0.4 && now < t.gateEnd + 0.8);
+    const openOut = active.some(({ t }) => Number.isFinite(t.exit) && now >= t.exit - 0.3 && now < t.exit + 0.8);
     this.barriers.forEach((b, i) => {
       const want = (i === 0 ? openIn : openOut) ? -1.35 * (b.userData.dir as number) : 0;
       b.rotation.x += (want - b.rotation.x) * Math.min(1, dt * 6);
@@ -1238,11 +1166,18 @@ export class TerminalScene {
 
     this.updateBottling(dt);
 
-    // уровень в резервуарах A и B — прямо из модели
-    const lv = levelAt(tr, now);
+    // уровни и состояния резервуаров — прямо из модели
+    const tk = tanksAt(tr, now);
+    const stateColor = { fill: 0x3b82f6, qc: 0xf59e0b, ship: 0x22c55e, empty: 0x94a3b8 } as const;
     this.levelBars.forEach((bar, i) => {
-      const want = THREE.MathUtils.clamp(i < 2 ? lv.a : lv.b, 0.03, 1);
+      const want = THREE.MathUtils.clamp(tk.lv[i] ?? 0, 0.02, 1);
       bar.scale.y += (want - bar.scale.y) * Math.min(1, dt * 3);
+    });
+    this.tankLights.forEach((m, i) => {
+      const c = stateColor[tk.st[i] ?? 'empty'];
+      m.color.setHex(c);
+      m.emissive.setHex(c);
+      m.emissiveIntensity = tk.st[i] === 'fill' ? 0.5 + 0.5 * Math.abs(Math.sin(performance.now() / 400)) : 0.8;
     });
   }
 

@@ -43,7 +43,7 @@ export default function TourView(p: Props) {
     report('info', 'tour.poi', `Просмотр точки «${POIS.find((x) => x.id === next)!.title}»`);
   };
 
-  // автоэкскурсия: камера сама проходит путь масла от цистерны до склада
+  // автоэкскурсия: камера сама проходит путь бензина от установки до автоцистерны
   useEffect(() => {
     if (auto === null) return;
     p.setSelected(TOUR_ORDER[auto]);
@@ -72,7 +72,7 @@ export default function TourView(p: Props) {
     setEye(true);
     setAuto(0);
     if (!p.playing) p.setPlaying(true);
-    report('info', 'tour.auto', 'Запущена автоэкскурсия по пути масла');
+    report('info', 'tour.auto', 'Запущена автоэкскурсия по пути бензина');
   };
   const setMode = (first: boolean) => {
     if (first && !p.selected) p.setSelected(TOUR_ORDER[0]);
@@ -80,7 +80,7 @@ export default function TourView(p: Props) {
     if (!first) setAuto(null);
   };
 
-  const rows = compareRows(baseline, result).filter((r) => ['turn', 'plan', 'margin'].includes(r.key));
+  const rows = compareRows(baseline, result).filter((r) => ['wait', 'blocked', 'plan'].includes(r.key));
 
   return (
     <section className={`tour ${night ? 'is-night' : ''}`} aria-label="3D-тур по участку">

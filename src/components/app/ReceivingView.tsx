@@ -1,50 +1,54 @@
 'use client';
 
 import { useMemo, useState } from 'react';
-import { fmtClock, type TwinResult } from '@/lib/twin/sim';
+import { fmtDayTime, type TwinResult } from '@/lib/twin/sim';
 import { fmt, liveAt, truckStatus } from '@/lib/twin/derive';
-import { Gantt } from './charts';
+import { LineChart } from './charts';
 import { StageTable } from './StageTable';
 import { Kpi, Panel, Status } from './ui';
 
 export default function ReceivingView({ result, time }: { result: TwinResult; time: number }) {
   const live = useMemo(() => liveAt(result, time), [result, time]);
   const [all, setAll] = useState(false);
-  const arrived = result.trucks.filter((t) => t.arrive <= time).reverse();
-  const upcoming = result.trucks.filter((t) => t.arrive > time).slice(0, 2);
-  const rows = [...upcoming.reverse(), ...arrived];
-  const shown = all ? rows : rows.slice(0, 9);
   const m = result.metrics;
+  const rows = useMemo(() => {
+    let i = result.trucks.findIndex((t) => t.arrive > time);
+    if (i < 0) i = result.trucks.length;
+    const upcoming = result.trucks.slice(i, i + 2).reverse();
+    const recent = result.trucks.slice(Math.max(0, i - 40), i).reverse();
+    return [...upcoming, ...recent];
+  }, [result, time]);
+  const shown = all ? rows : rows.slice(0, 10);
 
   return (
     <div className="stack">
       <div className="kpi-row">
         <Kpi label="В очереди" value={String(live.waiting)} />
-        <Kpi label="Посты слива" value={`${live.baysBusy} / ${result.params.bays}`} />
-        <Kpi label="Принято" value={fmt.int(live.received)} unit="м³" />
-        <Kpi label="Оборот" value={fmt.min(m.avgTurnaround)} unit="мин" />
+        <Kpi label="Посты заняты" value={`${live.baysBusy} / ${result.params.posts}`} />
+        <Kpi label="Отгружено" value={fmt.t(live.shippedT)} unit="т" />
+        <Kpi label="Ожидание налива" value={fmt.min(m.avgWait)} unit="мин" />
       </div>
 
       <Panel title="Этапы" flush>
-        <StageTable result={result} ids={['E1', 'E2', 'E3', 'E4', 'E5', 'E6']} />
+        <StageTable result={result} ids={['E1', 'E2', 'E3', 'E4']} />
       </Panel>
 
       <div className="grid-2">
-        <Panel title="Автоцистерны" flush action={rows.length > 9 && <button className="link" onClick={() => setAll(!all)}>{all ? 'Свернуть' : `Все ${rows.length}`}</button>}>
+        <Panel title="Автоцистерны" flush action={rows.length > 10 && <button className="link" onClick={() => setAll(!all)}>{all ? 'Свернуть' : 'Ещё'}</button>}>
           <div className="table-wrap">
             <table className="tbl">
-              <thead><tr><th>Номер</th><th>Сырьё</th><th>Статус</th><th className="r hide-sm">Время</th><th className="r">На базе</th></tr></thead>
+              <thead><tr><th>Номер</th><th>Марка</th><th>Статус</th><th className="r hide-sm">Прибытие</th><th className="r">Ждала</th></tr></thead>
               <tbody>
                 {shown.map((t) => {
                   const s = truckStatus(t, time);
-                  const onBase = time >= t.arrive ? Math.round((Math.min(time, Number.isFinite(t.exit) ? t.exit : time)) - t.arrive) : null;
+                  const w = time >= t.gateEnd ? Math.round((Number.isFinite(t.bayStart) && time >= t.bayStart ? t.bayStart : time) - t.gateEnd) : null;
                   return (
                     <tr key={t.id} className={s.tone === 'idle' ? 'dim' : ''}>
                       <td className="mono">{t.plate}</td>
-                      <td><span className={`comp c-${t.component}`}>{t.component === 0 ? 'A' : 'B'}</span> <span className="hide-sm">{t.volume} м³</span></td>
+                      <td><span className={`comp c-${t.component}`}>{t.component === 0 ? '92' : '95'}</span></td>
                       <td><Status tone={s.tone}>{s.label}</Status></td>
-                      <td className="r num muted hide-sm">{fmtClock(t.arrive)}</td>
-                      <td className="r num">{onBase == null ? '—' : `${onBase} мин`}</td>
+                      <td className="r num muted hide-sm">{fmtDayTime(t.arrive)}</td>
+                      <td className="r num">{w == null ? '—' : `${w} мин`}</td>
                     </tr>
                   );
                 })}
@@ -53,8 +57,8 @@ export default function ReceivingView({ result, time }: { result: TwinResult; ti
           </div>
         </Panel>
 
-        <Panel title="Путь цистерн">
-          <Gantt result={result} time={time} limit={10} />
+        <Panel title="Очередь за месяц">
+          <LineChart end={result.horizon} time={time} height={220} series={[{ name: 'машин в очереди', color: '#2563eb', area: true, points: result.queueSeries.map((q) => ({ t: q.t, v: q.waitingBay })) }]} />
         </Panel>
       </div>
     </div>

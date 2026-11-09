@@ -1,7 +1,7 @@
 'use client';
 
 import { Pause, Play } from 'lucide-react';
-import { fmtClock } from '@/lib/twin/sim';
+import { fmtDayTime } from '@/lib/twin/sim';
 import type { Tone } from '@/lib/twin/derive';
 
 export function Kpi({ label, value, unit, sub, delta, good }: { label: string; value: string; unit?: string; sub?: React.ReactNode; delta?: string; good?: boolean | null }) {
@@ -49,17 +49,18 @@ export function Meter({ value, tone = 'ok', marker }: { value: number; tone?: 'o
   );
 }
 
-const SPEEDS = [60, 240, 720];
+const SPEEDS = [240, 1440, 10080];
+const SPEED_LABEL: Record<number, string> = { 240: '×4 ч/мин', 1440: '×сутки/мин', 10080: '×неделя/мин' };
 
-export function SimClock({ time, end, playing, setPlaying, seek, speed, setSpeed, shiftEnd }: { time: number; end: number; playing: boolean; setPlaying: (v: boolean) => void; seek: (t: number) => void; speed: number; setSpeed: (v: number) => void; shiftEnd: number }) {
+export function SimClock({ time, end, playing, setPlaying, seek, speed, setSpeed }: { time: number; end: number; playing: boolean; setPlaying: (v: boolean) => void; seek: (t: number) => void; speed: number; setSpeed: (v: number) => void }) {
   return (
     <div className="clock">
       <button className="clock-play" onClick={() => { if (time >= end) seek(0); setPlaying(!playing); }} aria-label={playing ? 'Пауза' : 'Запустить'}>
         {playing ? <Pause size={14} fill="currentColor" /> : <Play size={14} fill="currentColor" />}
       </button>
-      <b className="num">{fmtClock(time)}</b>
-      <input type="range" min={0} max={Math.ceil(end)} step={0.5} value={Math.min(time, end)} onChange={(e) => seek(Number(e.target.value))} aria-label={`Время смены 08:00–${fmtClock(shiftEnd)}`} style={{ '--fill': `${(Math.min(time, end) / end) * 100}%` } as React.CSSProperties} />
-      <button className="clock-speed num" onClick={() => setSpeed(SPEEDS[(SPEEDS.indexOf(speed) + 1) % SPEEDS.length] ?? 60)} title="Скорость модели">×{speed}</button>
+      <b className="num">{fmtDayTime(time)}</b>
+      <input type="range" min={0} max={Math.ceil(end)} step={0.5} value={Math.min(time, end)} onChange={(e) => seek(Number(e.target.value))} aria-label="День месяца" style={{ '--fill': `${(Math.min(time, end) / end) * 100}%` } as React.CSSProperties} />
+      <button className="clock-speed num" onClick={() => setSpeed(SPEEDS[(SPEEDS.indexOf(speed) + 1) % SPEEDS.length] ?? 1440)} title="Скорость модели">{SPEED_LABEL[speed] ?? `×${speed}`}</button>
     </div>
   );
 }

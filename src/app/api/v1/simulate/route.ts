@@ -5,7 +5,7 @@ import { scenarioById } from '@/lib/twin/scenarios';
 import { fail, json, readJson, requireRole } from '@/lib/server/http';
 import { audit } from '@/lib/server/store';
 
-const summary = (r: ReturnType<typeof simulate>) => ({ params: r.params, metrics: r.metrics, resources: r.resources, queueSeries: r.queueSeries });
+const summary = (r: ReturnType<typeof simulate>) => ({ params: r.params, metrics: r.metrics, resources: r.resources, daily: r.daily });
 
 // Предустановленные сценарии — публичны и кэшируются CDN: выдерживает пиковую нагрузку без пересчёта
 export async function GET(req: NextRequest) {
@@ -24,6 +24,6 @@ export async function POST(req: NextRequest) {
   const t0 = performance.now();
   const r = simulate(params);
   const ms = Math.round(performance.now() - t0);
-  await audit('info', auth.session.name, 'twin.simulate', `Расчёт: постов слива ${params.bays}, смесителей ${params.blenders}, ${params.trucksPerHour} цист/ч${params.automation ? ', цифровой приём' : ''} → оборот ${r.metrics.avgTurnaround.toFixed(0)} мин, план ${Math.round(r.metrics.planDone * 100)}% (${ms} мс)`);
+  await audit('info', auth.session.name, 'twin.simulate', `Расчёт месяца: АИ-92 ${params.plan92} т, АИ-95 ${params.plan95} т, постов ${params.posts}, резервуаров ${params.tanks92}+${params.tanks95} → ожидание ${r.metrics.avgWait.toFixed(0)} мин, затаривание ${r.metrics.blockedHours.toFixed(1)} ч (${ms} мс)`);
   return json({ computeMs: ms, ...summary(r), ...(body.includeTrace ? { trucks: r.trucks, events: r.events } : {}) });
 }

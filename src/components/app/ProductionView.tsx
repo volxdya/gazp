@@ -1,41 +1,47 @@
 'use client';
 
 import { useMemo } from 'react';
-import { fmtClock, RECIPES, type TwinResult } from '@/lib/twin/sim';
-import { batchStatus, fmt, liveAt } from '@/lib/twin/derive';
+import { GRADES, type TwinResult } from '@/lib/twin/sim';
+import { fmt, liveAt, tankLabel, tanksAt, tankTone } from '@/lib/twin/derive';
 import { LineChart } from './charts';
 import { StageTable } from './StageTable';
-import { Kpi, Panel, Status } from './ui';
+import { Kpi, Meter, Panel, Status } from './ui';
 
 export default function ProductionView({ result, time }: { result: TwinResult; time: number }) {
   const live = useMemo(() => liveAt(result, time), [result, time]);
+  const tk = tanksAt(result, time);
   const p = result.params;
-  const lv = result.levelSeries;
+  const series = useMemo(() => [0, 1].map((g) => {
+    const ids = result.tanks.filter((t) => t.grade === g).map((t) => t.id);
+    return { name: GRADES[g], color: g === 0 ? '#2563eb' : '#0d9488', points: result.tankSeries.map((s) => ({ t: s.t, v: ids.reduce((a, i) => a + s.lv[i], 0) / Math.max(1, ids.length) })) };
+  }), [result]);
+  const ship = live.byGrade[0].ship + live.byGrade[1].ship;
+  const qc = live.byGrade[0].qc + live.byGrade[1].qc;
 
   return (
     <div className="stack">
       <div className="kpi-row">
-        <Kpi label="Партий готово" value={`${live.batchesDone} / ${p.batches}`} />
-        <Kpi label="Бочек" value={fmt.int(live.packed)} />
-        <Kpi label="Резервуары A / B" value={`${fmt.pct(live.levelA)} / ${fmt.pct(live.levelB)}`} unit="%" />
-        <Kpi label="Смесители" value={`${Math.min(live.blending + live.qc, p.blenders)} / ${p.blenders}`} />
+        <Kpi label="Парк заполнен" value={fmt.pct(live.park)} unit="%" />
+        <Kpi label="На наливе" value={String(ship)} />
+        <Kpi label="На анализе" value={String(qc)} />
+        <Kpi label="Затаривание за месяц" value={fmt.h(result.metrics.blockedHours)} unit="ч" />
       </div>
 
       <div className="grid-2">
-        <Panel title="Партии" flush>
+        <Panel title="Резервуары" flush>
           <div className="table-wrap">
             <table className="tbl">
-              <thead><tr><th>№</th><th>Продукт</th><th>Статус</th><th className="r hide-sm">План</th><th className="r">Готово</th></tr></thead>
+              <thead><tr><th>Резервуар</th><th>Состояние</th><th>Уровень</th><th className="r">Тонн</th></tr></thead>
               <tbody>
-                {result.batches.map((b) => {
-                  const s = batchStatus(b, time);
+                {result.tanks.map((t) => {
+                  const st = tk.st[t.id];
+                  const lv = tk.lv[t.id];
                   return (
-                    <tr key={b.id} className={s.tone === 'idle' ? 'dim' : ''}>
-                      <td className="num muted">{b.id}</td>
-                      <td><b>{RECIPES[b.product]}</b> <span className="muted hide-sm">· {b.m3} м³</span></td>
-                      <td><Status tone={s.tone}>{s.label}</Status></td>
-                      <td className="r num muted hide-sm">{fmtClock(b.planned)}</td>
-                      <td className="r num">{time >= b.done ? fmtClock(b.done) : Number.isFinite(b.done) && b.done > p.shiftHours * 60 + 15 ? 'после смены' : '—'}</td>
+                    <tr key={t.id}>
+                      <td><span className={`comp c-${t.grade}`}>{t.grade === 0 ? '92' : '95'}</span> <b>{t.name}</b></td>
+                      <td><Status tone={tankTone(st)}>{tankLabel(st)}</Status></td>
+                      <td><div className="meter-cell"><Meter value={lv} tone={t.grade === 0 ? 'ext' : 'int'} /><span className="num">{fmt.pct(lv)}%</span></div></td>
+                      <td className="r num">{fmt.int(lv * p.tankT)}</td>
                     </tr>
                   );
                 })}
@@ -44,23 +50,13 @@ export default function ProductionView({ result, time }: { result: TwinResult; t
           </div>
         </Panel>
 
-        <Panel title="Резервуары">
-          <LineChart
-            end={result.horizon}
-            max={1}
-            unit="%"
-            time={time}
-            height={200}
-            series={[
-              { name: 'A', color: '#2563eb', points: lv.map((x) => ({ t: x.t, v: x.a })) },
-              { name: 'B', color: '#0d9488', points: lv.map((x) => ({ t: x.t, v: x.b })) }
-            ]}
-          />
+        <Panel title="Заполнение по маркам">
+          <LineChart end={result.horizon} max={1} unit="%" time={time} height={220} series={series} />
         </Panel>
       </div>
 
       <Panel title="Этапы" flush>
-        <StageTable result={result} ids={['I1', 'I2', 'I3', 'I4', 'I5']} />
+        <StageTable result={result} ids={['I1', 'I2', 'I3', 'I4']} />
       </Panel>
     </div>
   );

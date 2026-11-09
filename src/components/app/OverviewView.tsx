@@ -2,7 +2,7 @@
 
 import { useMemo, useState } from 'react';
 import { ArrowRight } from 'lucide-react';
-import type { TwinResult } from '@/lib/twin/sim';
+import { GRADES, type TwinResult } from '@/lib/twin/sim';
 import type { PoiId } from '@/lib/twin/pois';
 import { fmt, liveAt } from '@/lib/twin/derive';
 import SiteMap from './SiteMap';
@@ -14,42 +14,39 @@ export default function OverviewView({ result, baseline, time, clock, openTour, 
   const live = useMemo(() => liveAt(result, time), [result, time]);
   const [sel, setSel] = useState<PoiId | null>(null);
   const m = result.metrics, b = baseline.metrics;
-  const resources = [...result.resources].sort((a, c) => c.utilization - a.utilization).slice(0, 5);
+  const dw = m.avgWait - b.avgWait;
 
   return (
     <div className="ov">
       <div className="kpi-row">
-        <Kpi label="Цистерн на базе" value={String(live.onSite)} />
-        <Kpi label="Оборот цистерны" value={fmt.min(m.avgTurnaround)} unit="мин" delta={delta(m.avgTurnaround - b.avgTurnaround, 'мин')} good={m.avgTurnaround <= b.avgTurnaround} />
-        <Kpi label="Партий готово" value={`${live.batchesDone} / ${result.params.batches}`} />
-        <Kpi label="Маржа смены" value={fmt.rub(m.margin)} unit="₽" delta={delta(m.margin - b.margin, '₽', true)} good={m.margin >= b.margin} />
+        <Kpi label="Машин в очереди" value={String(live.waiting)} />
+        <Kpi label="Ожидание налива" value={fmt.min(m.avgWait)} unit="мин" delta={Math.abs(dw) < 0.5 ? undefined : `${dw > 0 ? '+' : '−'}${fmt.min(Math.abs(dw))} мин`} good={dw <= 0} />
+        <Kpi label="Парк заполнен" value={fmt.pct(live.park)} unit="%" />
+        <Kpi label="План месяца" value={(m.planDone * 100).toFixed(1).replace('.', ',')} unit="%" sub={m.blockedHours > 0.5 ? `затаривание ${fmt.h(m.blockedHours)} ч` : undefined} />
       </div>
 
-      <div className="ov-grid">
-        <Panel title="Схема участка" className="ov-scheme" flush>
-          <SiteMap result={result} time={time} selected={sel} onOpen={setSel} />
-        </Panel>
+      <Panel title="Схема участка" className="ov-scheme" flush>
+        <SiteMap result={result} time={time} selected={sel} onOpen={setSel} />
+      </Panel>
 
-        <Panel title="Загрузка ресурсов" action={<button className="link" onClick={() => go('analytics')} aria-label="Аналитика"><ArrowRight size={14} /></button>}>
-          <div className="res-list res-grid">
-            {resources.map((r) => (
-              <div key={r.id} className="res-row">
-                <span>{r.label}</span>
-                <Meter value={r.utilization} tone={r.id === m.bottleneck ? 'warn' : 'ok'} />
-                <b className="num">{fmt.pct(r.utilization)}%</b>
-              </div>
-            ))}
+      <Panel title="Марки" action={<button className="link" onClick={() => go('plan')} aria-label="План"><ArrowRight size={14} /></button>}>
+        <div className="res-list res-grid">
+          {[0, 1].map((g) => (
+            <div key={g} className="res-row">
+              <span>{GRADES[g]}{live.blocked[g] && <em>затаривание</em>}</span>
+              <Meter value={live.byGrade[g].level} tone={live.byGrade[g].level > 0.85 ? 'warn' : g === 0 ? 'ext' : 'int'} />
+              <b className="num">{fmt.pct(live.byGrade[g].level)}%</b>
+            </div>
+          ))}
+          <div className="res-row">
+            <span>Посты налива</span>
+            <Meter value={m.postUtil} tone={m.postUtil > 0.85 ? 'warn' : 'ok'} />
+            <b className="num">{fmt.pct(m.postUtil)}%</b>
           </div>
-        </Panel>
-      </div>
+        </div>
+      </Panel>
 
       {sel && <PoiModal id={sel} result={result} time={time} clock={clock} onClose={() => setSel(null)} onNav={setSel} onTour={(id) => { setSel(null); openTour(id); }} />}
     </div>
   );
-}
-
-function delta(d: number, unit: string, money = false) {
-  if (Math.abs(d) < 0.5) return '±0';
-  const sign = d > 0 ? '+' : '−';
-  return `${sign}${money ? fmt.rub(Math.abs(d)) : fmt.min(Math.abs(d))} ${unit}`;
 }
